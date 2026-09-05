@@ -22,3 +22,17 @@ def test_produces_a_playable_audio_file(tmp_path):
     assert out.exists()
     assert out.stat().st_size > 1000
     assert not (tmp_path / "smoke.aiff").exists(), "intermediate must be cleaned up"
+
+
+def test_voice_names_containing_spaces_are_parsed_whole():
+    """macOS ships voices like "Bad News" and "Eddy (English (US))". Splitting on
+    the first space invents names and rejects real ones, so the swappable-engine
+    promise silently forbids a third of the installed voices."""
+    from audiodocs.speak import _parse_voices
+
+    listing = (
+        "Samantha           en_US    # Hello, my name is Samantha.\n"
+        "Bad News           en_US    # The light you see at the end.\n"
+        "Eddy (English (US)) en_US   # Hello!\n"
+    )
+    assert _parse_voices(listing) == ("Samantha", "Bad News", "Eddy (English (US))")

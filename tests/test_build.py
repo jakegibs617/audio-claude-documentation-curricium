@@ -14,7 +14,7 @@ def _stub_pipeline(monkeypatch, build_module, fail_titles=None):
     def fake_build_script(ep, text, cache_dir):
         if ep.title in fail_titles:
             raise RuntimeError(f"synthetic failure for {ep.title}")
-        return "Narration text, long enough, with no code or urls in it."
+        return f"Narration text, long enough, with no code or urls in it. {ep.exercise}"
 
     synth_calls: list[Path] = []
 
@@ -89,9 +89,14 @@ def test_batch_build_isolates_one_failure(tmp_path, monkeypatch):
     assert {r.number for r in report.built} == {2, 3}
 
 
-def test_cached_episode_is_reported_cached_not_rebuilt(tmp_path, monkeypatch):
-    """An episode whose audio file already exists must be skipped, not
-    resynthesized, and reported as cached."""
+def test_audio_of_unknown_provenance_is_rebuilt_not_trusted(tmp_path, monkeypatch):
+    """A stray .m4a is not evidence the episode is current.
+
+    Only a stamp matching the script that would be generated now proves that.
+    An unstamped file could be a half-written run, a hand-copied file, or audio
+    from a curriculum edit ago -- rebuilding costs seconds, trusting it wrongly
+    means shipping the wrong narration forever.
+    """
     import audiodocs.build as build_module
 
     synth_calls = _stub_pipeline(monkeypatch, build_module)
@@ -100,14 +105,12 @@ def test_cached_episode_is_reported_cached_not_rebuilt(tmp_path, monkeypatch):
     episode = curriculum.episode(4)
     existing = tmp_path / "audio" / f"{episode.slug}.m4a"
     existing.parent.mkdir(parents=True)
-    existing.write_bytes(b"already built")
+    existing.write_bytes(b"already built, but by what?")
 
     report = build_module.build_all(curriculum, tmp_path, only=[4])
 
-    assert len(report.results) == 1
-    assert report.results[0].status == "cached"
-    assert report.results[0].path == existing
-    assert synth_calls == []
+    assert report.results[0].status == "built"
+    assert synth_calls == [existing]
     assert report.ok is True
 
 
@@ -176,3 +179,90 @@ def test_main_episode_flag_can_repeat(tmp_path, monkeypatch):
     assert (tmp_path / "audio" / "02-how-claude-code-actually-works.m4a").exists()
     assert (tmp_path / "audio" / "04-prompt-caching.m4a").exists()
     assert not (tmp_path / "audio" / "05-inside-the-claude-directory.m4a").exists()
+
+
+def test_edited_exercise_rebuilds_stale_audio(tmp_path, monkeypatch):
+    """INTENT.md: regenerable, not precious. Nothing in out/ is protected.
+
+    Existence of the .m4a is not proof it is current. Edit an episode's exercise
+    or the narration prompt -- same number, same title, same slug, same path --
+    and the old audio must be replaced, not preserved forever with no way to
+    force it short of deleting files by hand.
+    """
+    import audiodocs.build as build_module
+    from dataclasses import replace
+
+    synth_calls = _stub_pipeline(monkeypatch, build_module)
+    curriculum = load_curriculum(Path("curriculum.yaml"))
+
+    build_module.build_all(curriculum, tmp_path, only=[3])
+    assert len(synth_calls) == 1
+
+    edited = replace(curriculum.episode(3), exercise="a completely different exercise")
+    curriculum2 = replace(curriculum, episodes=[edited])
+    report = build_module.build_all(curriculum2, tmp_path, only=[3])
+
+    assert len(synth_calls) == 2, "stale audio was kept after the exercise changed"
+    assert len(report.built) == 1
+
+
+def test_unchanged_episode_is_still_reported_cached(tmp_path, monkeypatch):
+    """The staleness check must not cost a resynthesis when nothing moved."""
+    import audiodocs.build as build_module
+
+    synth_calls = _stub_pipeline(monkeypatch, build_module)
+    curriculum = load_curriculum(Path("curriculum.yaml"))
+
+    build_module.build_all(curriculum, tmp_path, only=[3])
+    report = build_module.build_all(curriculum, tmp_path, only=[3])
+
+    assert len(synth_calls) == 1
+    assert len(report.cached) == 1
+
+
+def test_chrome_hanging_degrades_rather_than_aborting(tmp_path, monkeypatch):
+    """A headless Chrome that hangs raises TimeoutExpired, not ArtError -- and a
+    hang is the canonical Chrome failure. If the documented artwork degradation
+    does not cover it, one stuck render kills a 43-episode run."""
+    import subprocess
+
+    import audiodocs.build as build_module
+
+    _stub_pipeline(monkeypatch, build_module)
+    monkeypatch.setattr(
+        build_module,
+        "render_png",
+        lambda *a, **k: (_ for _ in ()).throw(
+            subprocess.TimeoutExpired(cmd="chrome", timeout=120)
+        ),
+    )
+
+    curriculum = load_curriculum(Path("curriculum.yaml"))
+    report = build_module.build_all(curriculum, tmp_path, only=[3])
+
+    assert report.ok is True
+    assert report.results[0].status == "built"
+
+
+def test_build_all_writes_a_feed(tmp_path, monkeypatch):
+    """The feed is the delivery mechanism; a build that does not emit one leaves
+    the audio unreachable from a phone."""
+    import xml.etree.ElementTree as ET
+
+    import audiodocs.build as build_module
+
+    _stub_pipeline(monkeypatch, build_module)
+    rc = build_module.main(
+        [
+            "--curriculum", "curriculum.yaml",
+            "--out", str(tmp_path),
+            "--episode", "3",
+            "--base-url", "https://example.test/audio/",
+        ]
+    )
+
+    assert rc == 0
+    feed = tmp_path / "feed.xml"
+    assert feed.exists()
+    channel = ET.parse(feed).getroot().find("channel")
+    assert len(channel.findall("item")) == 1

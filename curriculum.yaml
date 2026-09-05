@@ -21,7 +21,7 @@ episodes:
   - number: 5
     title: Inside the .claude directory
     sources: [claude-directory]
-    exercise: Run ls -R on your home claude directory and name the purpose of every top-level entry.
+    exercise: List your home claude directory recursively and name the purpose of every top-level entry.
   - number: 6
     title: Your first real task
     sources: [quickstart]
@@ -61,7 +61,7 @@ episodes:
   - number: 15
     title: The CLI surface
     sources: [cli-reference, commands, interactive-mode, env-vars, tools-reference]
-    exercise: Run claude -p with a one-line question you would normally ask interactively, and compare the headless output to what an interactive session gives you.
+    exercise: Ask claude a one-line question in headless print mode that you would normally ask interactively, and compare the output to what an interactive session gives you.
   - number: 16
     title: Skills
     sources: [skills]
@@ -109,7 +109,7 @@ episodes:
   - number: 27
     title: Headless mode
     sources: [headless]
-    exercise: Run claude -p "one real question about your repo" from a shell script and capture the output into a variable.
+    exercise: Ask claude one real question about your repo in headless print mode from a shell script, and capture the output into a variable.
   - number: 28
     title: Schedules and routines
     sources: [scheduled-tasks, routines]

@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .art import ArtError, render_png
+from .art import render_png
+from .feed import FeedError, build_feed
 from .fetch import fetch_doc
 from .manifest import Curriculum, Episode, load_curriculum
 from .script import build_script
@@ -16,7 +18,28 @@ from .tag import tag_audio
 DIAGRAMS = Path("diagrams")
 
 
-def build_episode(episode: Episode, curriculum: Curriculum, out_dir: Path) -> Path:
+def _stamp_path(episode: Episode, out_dir: Path) -> Path:
+    """Records what produced the current audio, so staleness is detectable."""
+    return Path(out_dir) / "audio" / f"{episode.slug}.stamp"
+
+
+def _stamp(script: str, voice: str) -> str:
+    digest = hashlib.sha256()
+    digest.update(script.encode())
+    digest.update(voice.encode())
+    return digest.hexdigest()
+
+
+def _build_one(
+    episode: Episode, curriculum: Curriculum, out_dir: Path
+) -> tuple[Path, bool]:
+    """Build `episode`, returning its audio path and whether it was already current.
+
+    The expensive stages (fetch, model call) are disk-cached and cheap on a hit,
+    so they run every time; only synthesis and tagging are skipped. That is what
+    makes staleness detectable at all: the audio is compared against the script
+    that would produce it now, not merely checked for existence.
+    """
     out_dir = Path(out_dir)
     cache = out_dir / "cache"
 
@@ -24,6 +47,12 @@ def build_episode(episode: Episode, curriculum: Curriculum, out_dir: Path) -> Pa
         fetch_doc(slug, cache / "docs") for slug in episode.sources
     )
     script = build_script(episode, sources_text, cache / "scripts")
+
+    audio_path = out_dir / "audio" / f"{episode.slug}.m4a"
+    stamp_path = _stamp_path(episode, out_dir)
+    stamp = _stamp(script, curriculum.voice)
+    if audio_path.exists() and stamp_path.exists() and stamp_path.read_text() == stamp:
+        return audio_path, True
 
     audio = synthesize(
         script, out_dir / "audio" / f"{episode.slug}.m4a", voice=curriculum.voice
@@ -36,14 +65,24 @@ def build_episode(episode: Episode, curriculum: Curriculum, out_dir: Path) -> Pa
                 DIAGRAMS / f"{episode.diagram}.svg",
                 out_dir / "art" / f"{episode.diagram}.png",
             )
-        except ArtError as exc:
-            # Audio is the primary deliverable; artwork degrades rather than fails.
+        except Exception as exc:  # noqa: BLE001 - artwork never fails the audio
+            # Audio is the primary deliverable; artwork degrades rather than
+            # fails. Chrome can hang (TimeoutExpired), be missing
+            # (FileNotFoundError), or fail to move its output (OSError) -- none
+            # of which are ArtError, and all of which used to abort the run.
             print(
                 f"warning: artwork skipped for episode {episode.number}: {exc}",
                 file=sys.stderr,
             )
 
     tag_audio(audio, episode.title, episode.number, curriculum.album, artwork=artwork)
+    stamp_path.write_text(stamp)
+    return audio, False
+
+
+def build_episode(episode: Episode, curriculum: Curriculum, out_dir: Path) -> Path:
+    """Build one episode and return its audio path."""
+    audio, _ = _build_one(episode, curriculum, out_dir)
     return audio
 
 
@@ -107,23 +146,17 @@ def build_all(
     )
 
     results: list[EpisodeResult] = []
-    for episode in episodes:
-        audio_path = _audio_path(episode, out_dir)
-
-        if audio_path.exists():
-            results.append(
-                EpisodeResult(
-                    number=episode.number,
-                    title=episode.title,
-                    status="cached",
-                    path=audio_path,
-                    error=None,
-                )
-            )
-            continue
-
+    for index, episode in enumerate(episodes, start=1):
+        # A 43-episode build is roughly an hour of model calls and TTS. Say what
+        # is happening as it happens: a silent terminal is indistinguishable
+        # from a hang.
+        print(
+            f"[{index}/{len(episodes)}] episode {episode.number}: {episode.title}",
+            file=sys.stderr,
+            flush=True,
+        )
         try:
-            path = build_episode(episode, curriculum, out_dir)
+            path, was_cached = _build_one(episode, curriculum, out_dir)
         except Exception as exc:  # noqa: BLE001 - isolate this episode's failure
             results.append(
                 EpisodeResult(
@@ -140,7 +173,7 @@ def build_all(
             EpisodeResult(
                 number=episode.number,
                 title=episode.title,
-                status="built",
+                status="cached" if was_cached else "built",
                 path=path,
                 error=None,
             )
@@ -175,6 +208,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build audio course episodes.")
     parser.add_argument("--curriculum", type=Path, default=Path("curriculum.yaml"))
     parser.add_argument("--out", type=Path, default=Path("out"))
+    parser.add_argument(
+        "--base-url",
+        default="http://localhost:8000/audio/",
+        help="Where the audio files will be reachable over HTTP. Podcast apps "
+        "cannot load a file:// feed, so this must be an http(s) URL to work "
+        "on a phone.",
+    )
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument(
         "--episode",
@@ -193,6 +233,17 @@ def main(argv: list[str] | None = None) -> int:
 
     report = build_all(curriculum, args.out, only=only)
     print(format_report(report))
+
+    # The feed lists whatever audio exists, so it is worth regenerating even
+    # after a partial build -- but it must never mask a build failure.
+    try:
+        feed = build_feed(
+            curriculum, args.out / "audio", args.out / "feed.xml", args.base_url
+        )
+        print(f"feed: {feed}")
+    except FeedError as exc:
+        print(f"warning: feed not written: {exc}", file=sys.stderr)
+
     return 0 if report.ok else 1
 
 

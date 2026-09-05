@@ -5,6 +5,7 @@ paid API means replacing `_synthesize_aiff` and nothing else.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -14,12 +15,32 @@ class SpeakError(Exception):
     """Speech synthesis failed."""
 
 
+# "<name>  <locale>  # <sample>" -- the locale is the only dependable column.
+VOICE_LINE = re.compile(r"^(.+?)\s+[a-z]{2,3}[_-][A-Za-z0-9]{2,3}\s")
+
+
+def _parse_voices(listing: str) -> tuple[str, ...]:
+    """Voice names from `say -v \'?\'` output.
+
+    Names contain spaces and parentheses ("Bad News", "Eddy (English (US))"),
+    and the column gap before the locale can be a single space, so neither
+    `split()` nor a two-space column split works. The locale token is the only
+    reliable anchor: the name is everything before it.
+    """
+    names = []
+    for line in listing.splitlines():
+        match = VOICE_LINE.match(line)
+        if match:
+            names.append(match.group(1).strip())
+    return tuple(names)
+
+
 @lru_cache(maxsize=1)
 def available_voices() -> tuple[str, ...]:
     result = subprocess.run(["say", "-v", "?"], capture_output=True, text=True)
     if result.returncode != 0:
         raise SpeakError("could not list voices")
-    return tuple(line.split()[0] for line in result.stdout.splitlines() if line.strip())
+    return _parse_voices(result.stdout)
 
 
 def _synthesize_aiff(text: str, aiff: Path, voice: str) -> None:

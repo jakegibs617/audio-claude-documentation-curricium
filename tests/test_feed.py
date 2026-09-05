@@ -1,10 +1,11 @@
 import shutil
 import subprocess
+from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import pytest
 
-from audiodocs.manifest import Curriculum, Episode
+from audiodocs.manifest import Curriculum, Episode, load_curriculum
 from audiodocs.feed import build_feed, FeedError
 
 ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
@@ -186,3 +187,56 @@ def test_duration_is_read_from_a_real_audio_file(tmp_path):
     parts = duration_el.text.split(":")
     assert 2 <= len(parts) <= 3
     assert all(p.isdigit() for p in parts)
+
+
+RSS2_REQUIRED = ("title", "link", "description")
+
+
+def _channel(tmp_path, audio_dir):
+    curriculum = load_curriculum(Path("curriculum.yaml"))
+    out = build_feed(curriculum, audio_dir, tmp_path / "feed.xml", "https://x.test/a/")
+    return ET.parse(out).getroot().find("channel")
+
+
+def test_channel_has_every_rss2_required_element(tmp_path):
+    """RSS 2.0 requires title, link, and description on <channel>.
+    A feed missing them is rejected outright by strict readers."""
+    audio = tmp_path / "audio"
+    audio.mkdir()
+    channel = _channel(tmp_path, audio)
+    for tag in RSS2_REQUIRED:
+        assert channel.find(tag) is not None, f"<channel> missing <{tag}>"
+        assert (channel.find(tag).text or "").strip(), f"<{tag}> is empty"
+
+
+def test_items_carry_pubdate_in_episode_order(tmp_path):
+    """Podcast apps order by pubDate, not itunes:episode. Without it a
+    sequenced course arrives shuffled, which defeats the whole point."""
+    from email.utils import parsedate_to_datetime
+
+    audio = tmp_path / "audio"
+    audio.mkdir()
+    curriculum = load_curriculum(Path("curriculum.yaml"))
+    for number in (1, 2, 3):
+        (audio / f"{curriculum.episode(number).slug}.m4a").write_bytes(b"x")
+
+    channel = _channel(tmp_path, audio)
+    dates = [
+        parsedate_to_datetime(item.find("pubDate").text)
+        for item in channel.findall("item")
+    ]
+    assert len(dates) == 3
+    assert dates == sorted(dates), "episode 1 must be the oldest, so apps play it first"
+
+
+def test_feed_is_byte_stable_across_rebuilds(tmp_path):
+    """A pubDate derived from the clock would rewrite every guid's date on each
+    build and re-notify subscribers about episodes they already have."""
+    audio = tmp_path / "audio"
+    audio.mkdir()
+    curriculum = load_curriculum(Path("curriculum.yaml"))
+    (audio / f"{curriculum.episode(1).slug}.m4a").write_bytes(b"x")
+
+    first = build_feed(curriculum, audio, tmp_path / "a.xml", "https://x.test/a/")
+    second = build_feed(curriculum, audio, tmp_path / "b.xml", "https://x.test/a/")
+    assert first.read_bytes() == second.read_bytes()

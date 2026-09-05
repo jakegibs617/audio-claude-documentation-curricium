@@ -7,6 +7,8 @@ any point in the course.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -15,6 +17,12 @@ from mutagen.mp4 import MP4
 from .manifest import Curriculum, Episode
 
 ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+
+# Podcast apps order episodes by pubDate, not by itunes:episode, so a sequenced
+# course needs increasing dates or it arrives shuffled. Derived from the episode
+# number rather than the clock: a feed that changes on every rebuild re-notifies
+# subscribers about episodes they already have.
+EPOCH = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
 ET.register_namespace("itunes", ITUNES_NS)
 
 
@@ -30,6 +38,10 @@ def _join_url(base_url: str, filename: str) -> str:
     if not base_url.endswith("/"):
         base_url = base_url + "/"
     return base_url + quote(filename)
+
+
+def _pub_date(number: int) -> str:
+    return format_datetime(EPOCH + timedelta(days=number))
 
 
 def _duration_text(audio_path: Path) -> str | None:
@@ -69,12 +81,30 @@ def build_feed(curriculum: Curriculum, audio_dir: Path, out_path: Path, base_url
 
     rss = ET.Element("rss", {"version": "2.0"})
     channel = ET.SubElement(rss, "channel")
+    # title, link and description are required by RSS 2.0; strict readers
+    # reject a feed without all three.
     ET.SubElement(channel, "title").text = curriculum.album
+    ET.SubElement(channel, "link").text = base_url
+    ET.SubElement(channel, "description").text = (
+        f"{curriculum.album}: the Claude Code documentation, rewritten to be "
+        "heard and sequenced as a course."
+    )
+    ET.SubElement(channel, "language").text = "en-us"
+    ET.SubElement(channel, _itunes("author")).text = "Claude Code, Narrated"
+    ET.SubElement(channel, _itunes("explicit")).text = "false"
+    ET.SubElement(channel, _itunes("summary")).text = (
+        "One narrated episode per topic, in the order that builds understanding "
+        "rather than the order the sidebar happens to use."
+    )
 
     for episode, audio_path in _built_episodes(curriculum, audio_dir):
         item = ET.SubElement(channel, "item")
         ET.SubElement(item, "title").text = episode.title
         ET.SubElement(item, _itunes("episode")).text = str(episode.number)
+        ET.SubElement(item, "pubDate").text = _pub_date(episode.number)
+        ET.SubElement(item, "description").text = (
+            f"{episode.title}. Exercise: {episode.exercise}"
+        )
         ET.SubElement(item, "guid", {"isPermaLink": "false"}).text = episode.slug
         ET.SubElement(
             item,

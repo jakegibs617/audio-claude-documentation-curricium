@@ -88,3 +88,27 @@ def test_only_episode_3_declares_a_diagram_and_its_svg_exists():
     for ep in diagrammed:
         svg_path = DIAGRAMS_DIR / f"{ep.diagram}.svg"
         assert svg_path.exists(), f"missing diagram file: {svg_path}"
+
+
+def test_every_exercise_in_the_real_curriculum_is_speakable():
+    """Exercises are interpolated into the narration prompt and the model is told
+    to close on them. An unspeakable exercise asks the model to produce exactly
+    what the sanitizer will reject -- after a paid call."""
+    from audiodocs.sanitize import find_violations
+
+    curriculum = load_curriculum(Path("curriculum.yaml"))
+    bad = {e.number: find_violations(e.exercise) for e in curriculum.episodes}
+    assert not {n: v for n, v in bad.items() if v}
+
+
+def test_unspeakable_exercise_is_a_manifest_error(tmp_path):
+    """Catch it at load, in microseconds, not per-episode after payment."""
+    path = tmp_path / "c.yaml"
+    path.write_text(
+        "album: A\nvoice: Samantha\nepisodes:\n"
+        "  - number: 1\n    title: T\n    sources: [x]\n"
+        "    exercise: Run ls -R and look at it.\n"
+    )
+    with pytest.raises(ManifestError) as exc:
+        load_curriculum(path)
+    assert "-R" in str(exc.value)

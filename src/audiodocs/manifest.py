@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+from .sanitize import find_violations
+
 
 class ManifestError(Exception):
     """The curriculum file is malformed."""
@@ -53,14 +55,33 @@ def load_curriculum(path: Path) -> Curriculum:
     seen: set[int] = set()
 
     for raw in data.get("episodes") or []:
+        if not isinstance(raw, dict):
+            raise ManifestError(f"episode entry is not a mapping: {raw!r}")
         number = raw.get("number")
         for field in REQUIRED:
             if field not in raw:
                 raise ManifestError(f"episode {number} missing required field: {field}")
+        if not isinstance(number, int):
+            raise ManifestError(f"episode number must be a whole number, got {number!r}")
+        # A bare string is iterable, so `sources: context-window` would silently
+        # become one slug per character and fetch 14 nonexistent pages.
+        if isinstance(raw["sources"], str):
+            raise ManifestError(
+                f"episode {number}: sources must be a list, got the string "
+                f"{raw['sources']!r} -- did you forget the brackets?"
+            )
         if not raw["sources"]:
             raise ManifestError(f"episode {number} has no sources")
         if number in seen:
             raise ManifestError(f"duplicate episode number: {number}")
+        # The exercise is interpolated into the narration prompt and the model is
+        # told to close on it. An unspeakable exercise asks for a rejection that
+        # only surfaces after a paid model call.
+        violations = find_violations(raw["exercise"])
+        if violations:
+            raise ManifestError(
+                f"episode {number}: exercise is not speakable: {violations[0]}"
+            )
         seen.add(number)
         episodes.append(
             Episode(
