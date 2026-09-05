@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from .art import ArtError, render_png
@@ -46,20 +47,153 @@ def build_episode(episode: Episode, curriculum: Curriculum, out_dir: Path) -> Pa
     return audio
 
 
+def _audio_path(episode: Episode, out_dir: Path) -> Path:
+    """Where `build_episode` leaves the finished, tagged audio for `episode`.
+
+    Audio does not degrade (see INTENT.md, "Regenerable, not precious"), so
+    the presence of this file is treated as proof the episode is done.
+    """
+    return Path(out_dir) / "audio" / f"{episode.slug}.m4a"
+
+
+@dataclass
+class EpisodeResult:
+    """The outcome of trying to build one episode as part of a batch."""
+
+    number: int
+    title: str
+    status: str  # "built" | "cached" | "failed"
+    path: Path | None
+    error: str | None
+
+
+@dataclass
+class BuildReport:
+    """The outcome of a `build_all` run, across every episode attempted."""
+
+    results: list[EpisodeResult]
+
+    @property
+    def built(self) -> list[EpisodeResult]:
+        return [r for r in self.results if r.status == "built"]
+
+    @property
+    def cached(self) -> list[EpisodeResult]:
+        return [r for r in self.results if r.status == "cached"]
+
+    @property
+    def failed(self) -> list[EpisodeResult]:
+        return [r for r in self.results if r.status == "failed"]
+
+    @property
+    def ok(self) -> bool:
+        return not self.failed
+
+
+def build_all(
+    curriculum: Curriculum, out_dir: Path, only: list[int] | None = None
+) -> BuildReport:
+    """Build every episode in `curriculum` (or just `only`, if given).
+
+    One episode failing must never abort the batch: each episode's exceptions
+    are caught and recorded, and the loop moves on. An episode whose audio
+    already exists on disk is reported "cached" rather than resynthesized.
+    """
+    out_dir = Path(out_dir)
+    episodes = (
+        list(curriculum.episodes)
+        if only is None
+        else [curriculum.episode(number) for number in only]
+    )
+
+    results: list[EpisodeResult] = []
+    for episode in episodes:
+        audio_path = _audio_path(episode, out_dir)
+
+        if audio_path.exists():
+            results.append(
+                EpisodeResult(
+                    number=episode.number,
+                    title=episode.title,
+                    status="cached",
+                    path=audio_path,
+                    error=None,
+                )
+            )
+            continue
+
+        try:
+            path = build_episode(episode, curriculum, out_dir)
+        except Exception as exc:  # noqa: BLE001 - isolate this episode's failure
+            results.append(
+                EpisodeResult(
+                    number=episode.number,
+                    title=episode.title,
+                    status="failed",
+                    path=None,
+                    error=str(exc),
+                )
+            )
+            continue
+
+        results.append(
+            EpisodeResult(
+                number=episode.number,
+                title=episode.title,
+                status="built",
+                path=path,
+                error=None,
+            )
+        )
+
+    return BuildReport(results)
+
+
+def format_report(report: BuildReport) -> str:
+    """A human-readable summary of a batch build, failures unmissable."""
+    lines = [
+        f"Built {len(report.built)}, cached {len(report.cached)}, "
+        f"failed {len(report.failed)} (of {len(report.results)} episodes)"
+    ]
+
+    for result in report.results:
+        if result.status == "built":
+            lines.append(f"  built   {result.number:>2}: {result.title}")
+        elif result.status == "cached":
+            lines.append(f"  cached  {result.number:>2}: {result.title}")
+
+    if report.failed:
+        lines.append("")
+        lines.append(f"*** {len(report.failed)} EPISODE(S) FAILED ***")
+        for result in report.failed:
+            lines.append(f"  FAILED  {result.number:>2}: {result.title} - {result.error}")
+
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build audio course episodes.")
     parser.add_argument("--curriculum", type=Path, default=Path("curriculum.yaml"))
     parser.add_argument("--out", type=Path, default=Path("out"))
-    parser.add_argument("--episode", type=int, required=True)
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument(
+        "--episode",
+        type=int,
+        action="append",
+        dest="episode",
+        help="Episode number to build. May be repeated.",
+    )
+    selection.add_argument(
+        "--all", action="store_true", help="Build every episode in the curriculum."
+    )
     args = parser.parse_args(argv)
 
     curriculum = load_curriculum(args.curriculum)
-    episode = curriculum.episode(args.episode)
+    only = None if args.all else args.episode
 
-    print(f"Building episode {episode.number}: {episode.title}")
-    path = build_episode(episode, curriculum, args.out)
-    print(f"Wrote {path} ({path.stat().st_size // 1024} KB)")
-    return 0
+    report = build_all(curriculum, args.out, only=only)
+    print(format_report(report))
+    return 0 if report.ok else 1
 
 
 if __name__ == "__main__":
