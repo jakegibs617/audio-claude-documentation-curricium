@@ -24,29 +24,42 @@ DANGLING = re.compile(
     re.IGNORECASE,
 )
 
-# Requires a word boundary before the dash so hyphenated compounds such as
-# "well-defined" and "trade-offs" are not mistaken for command flags.
-COMMAND_FLAG = re.compile(r"(?:^|\s)--?[a-zA-Z][\w-]*")
+# The character before the dash must not be alphanumeric, so hyphenated
+# compounds ("well-defined", "trade-offs") are safe -- but a flag wrapped in a
+# backtick, quote, or bracket is still a flag. `say` reads `--print` and
+# --print as bit-identical audio, so the wrapper must not buy an exemption.
+COMMAND_FLAG = re.compile(r"(?:^|[\s`\"'(\[{])(--?[a-zA-Z][\w-]*)")
 
 
 class UnspeakableError(Exception):
     """A script contains content that cannot be spoken aloud."""
 
 
-def find_violations(text: str) -> list[str]:
-    """Return a description for each kind of unspeakable content present."""
-    violations: list[str] = []
+def _excerpt(match: re.Match) -> str:
+    """The offending text, trimmed, for a message someone can act on."""
+    found = match.group(match.lastindex or 0).strip()
+    return found if len(found) <= 60 else found[:57] + "..."
 
-    if CODE_FENCE.search(text):
-        violations.append("contains a code fence; code must be described, not read")
-    if BARE_URL.search(text):
-        violations.append("contains a URL; a spoken URL is unusable")
-    if TABLE_ROW.search(text):
-        violations.append("contains a markdown table; tables must be prose")
-    if DANGLING.search(text):
-        violations.append("contains a dangling reference to unseen content")
-    if COMMAND_FLAG.search(text):
-        violations.append("contains a command flag; flags must be named in words")
+
+def find_violations(text: str) -> list[str]:
+    """Return a description for each kind of unspeakable content present.
+
+    Each description names the offending substring: a bare category is not
+    actionable on a 1,500-word script.
+    """
+    checks = (
+        (CODE_FENCE, "contains a code fence; code must be described, not read"),
+        (BARE_URL, "contains a URL; a spoken URL is unusable"),
+        (TABLE_ROW, "contains a markdown table; tables must be prose"),
+        (DANGLING, "contains a dangling reference to unseen content"),
+        (COMMAND_FLAG, "contains a command flag; flags must be named in words"),
+    )
+
+    violations: list[str] = []
+    for pattern, description in checks:
+        match = pattern.search(text)
+        if match:
+            violations.append(f"{description}: {_excerpt(match)!r}")
 
     return violations
 

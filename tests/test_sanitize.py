@@ -61,3 +61,17 @@ def test_ordinary_prose_using_above_is_not_a_false_positive():
 def test_hyphenated_words_are_not_mistaken_for_flags():
     prose = "A well-defined, purpose-built interface keeps the trade-offs visible."
     assert find_violations(prose) == []
+
+
+def test_detects_flags_wrapped_in_punctuation():
+    """A model told "no markdown" that still writes one inline backtick must not
+    slip past. `say` vocalizes the flag identically either way."""
+    for wrapper in ("`--print`", '"--print"', "(--print)", "[--print]"):
+        text = f"{CLEAN} Use the {wrapper} flag."
+        assert any("flag" in v for v in find_violations(text)), wrapper
+
+
+def test_violation_names_the_offending_text():
+    """A rejection on a 1,500-word script is only actionable if it says what to look for."""
+    violations = find_violations(CLEAN + " Pass the --resume flag.")
+    assert any("--resume" in v for v in violations), violations

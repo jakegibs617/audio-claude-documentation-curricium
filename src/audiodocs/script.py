@@ -8,7 +8,6 @@ from pathlib import Path
 from .manifest import Episode
 from .sanitize import UnspeakableError, assert_speakable
 
-PROMPT_VERSION = "1"
 
 NARRATION_PROMPT = """\
 You are writing a script to be read aloud as one episode of an audio course \
@@ -55,11 +54,30 @@ def _default_runner(prompt: str, stdin: str) -> str:
 
 def _cache_key(episode: Episode, sources_text: str) -> str:
     digest = hashlib.sha256()
-    digest.update(PROMPT_VERSION.encode())
+    # Hash the prompt itself, not a hand-maintained version string: editing the
+    # prompt is the documented fix for bad narration and must actually rebuild.
+    digest.update(NARRATION_PROMPT.encode())
     digest.update(episode.title.encode())
     digest.update(episode.exercise.encode())
     digest.update(sources_text.encode())
     return digest.hexdigest()[:16]
+
+
+def _reject_unspeakable(script: str, episode: Episode, cache_dir: Path) -> None:
+    """Raise if `script` cannot be spoken, keeping the text for inspection.
+
+    A rejection has already cost a model call. Discarding the script would cost
+    another just to see what was wrong with it.
+    """
+    try:
+        assert_speakable(script)
+    except UnspeakableError as exc:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        rejected = cache_dir / f"{episode.slug}.rejected.txt"
+        rejected.write_text(script)
+        raise ScriptError(
+            f"episode {episode.number}: {exc}\nrejected script kept at {rejected}"
+        ) from exc
 
 
 def build_script(
@@ -70,7 +88,11 @@ def build_script(
     cached = cache_dir / f"{episode.slug}-{_cache_key(episode, sources_text)}.txt"
 
     if cached.exists():
-        return cached.read_text()
+        # Re-check on the cache-hit path too. The sanitizer will get stricter;
+        # scripts written under a looser one must not stay permanently exempt.
+        script = cached.read_text()
+        _reject_unspeakable(script, episode, cache_dir)
+        return script
 
     prompt = NARRATION_PROMPT.format(title=episode.title, exercise=episode.exercise)
     script = (runner or _default_runner)(prompt, sources_text)
@@ -78,10 +100,7 @@ def build_script(
     if not script.strip():
         raise ScriptError(f"episode {episode.number}: model returned nothing")
 
-    try:
-        assert_speakable(script)
-    except UnspeakableError as exc:
-        raise ScriptError(f"episode {episode.number}: {exc}") from exc
+    _reject_unspeakable(script, episode, cache_dir)
 
     cached.parent.mkdir(parents=True, exist_ok=True)
     cached.write_text(script)

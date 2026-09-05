@@ -68,3 +68,53 @@ def test_changed_source_invalidates_cache(tmp_path):
 def test_narration_prompt_forbids_code_and_urls():
     assert "code" in NARRATION_PROMPT.lower()
     assert "url" in NARRATION_PROMPT.lower()
+
+
+def test_cached_script_is_still_sanitized(tmp_path):
+    """A script cached before the sanitizer tightened must not stay exempt."""
+    ep = Episode(number=3, title="The Context Window", sources=["x"], exercise="do it")
+    cache = tmp_path / "scripts"
+    cache.mkdir()
+    key = build_script.__globals__["_cache_key"](ep, "SOURCES")
+    (cache / f"{ep.slug}-{key}.txt").write_text("Use the `--print` flag.")
+
+    def never(prompt, stdin):
+        raise AssertionError("model must not be called on a cache hit")
+
+    with pytest.raises(ScriptError) as exc:
+        build_script(ep, "SOURCES", cache, runner=never)
+    assert "--print" in str(exc.value)
+
+
+def test_editing_the_prompt_invalidates_the_cache(tmp_path):
+    """INTENT.md: the fix is always the prompt. A prompt edit must actually rebuild."""
+    import audiodocs.script as script_mod
+
+    ep = Episode(number=3, title="The Context Window", sources=["x"], exercise="do it")
+    calls = []
+
+    def runner(prompt, stdin):
+        calls.append(prompt)
+        return "Clean narration that says nothing unspeakable at all."
+
+    original = script_mod.NARRATION_PROMPT
+    try:
+        build_script(ep, "SOURCES", tmp_path, runner=runner)
+        script_mod.NARRATION_PROMPT = original + "\nAlways mention the weather. {title}{exercise}"
+        build_script(ep, "SOURCES", tmp_path, runner=runner)
+    finally:
+        script_mod.NARRATION_PROMPT = original
+
+    assert len(calls) == 2, "prompt changed but the cache was reused"
+
+
+def test_rejected_script_is_kept_for_inspection(tmp_path):
+    """A rejection costs a model call; discarding the evidence costs another."""
+    ep = Episode(number=3, title="The Context Window", sources=["x"], exercise="do it")
+
+    with pytest.raises(ScriptError):
+        build_script(ep, "SOURCES", tmp_path, runner=lambda p, s: "Use --print now.")
+
+    rejected = list(tmp_path.glob("*.rejected.txt"))
+    assert rejected, "rejected script was discarded"
+    assert "--print" in rejected[0].read_text()
