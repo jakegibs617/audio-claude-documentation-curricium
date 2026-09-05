@@ -1,0 +1,20 @@
+album: Claude Code, Narrated
+voice: Samantha
+episodes:
+  - number: 2
+    title: How Claude Code actually works
+    sources: [how-claude-code-works]
+    exercise: Run claude with no arguments and watch what loads before your first prompt.
+  - number: 3
+    title: The context window
+    sources: [context-window]
+    exercise: Run /context in a session that has been going a while, and read the breakdown out loud.
+    diagram: ep03-context-window
+  - number: 4
+    title: Prompt caching
+    sources: [prompt-caching]
+    exercise: Run /cost after a long session and find what the cache saved you.
+  - number: 5
+    title: Inside the .claude directory
+    sources: [claude-directory]
+    exercise: Run ls -R on your home claude directory and name the purpose of every top-level entry.
