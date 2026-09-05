@@ -1,0 +1,10 @@
+[project]
+name = "audiodocs"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["PyYAML", "mutagen"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = ["smoke: exercises a real system binary (say, afconvert, Chrome)"]
