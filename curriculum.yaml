@@ -61,7 +61,7 @@ episodes:
   - number: 14
     title: Models, fast mode, and the advisor
     sources: [model-config, fast-mode, advisor]
-    exercise: Ask the same question before and after switching models with /model, and compare the two answers.
+    exercise: Ask the same question in fast mode and again in normal mode, timing each with a stopwatch. You are measuring latency, not answer quality, which varies run to run.
   - number: 15
     title: The CLI surface
     sources: [cli-reference, commands, interactive-mode, env-vars, tools-reference]
@@ -93,7 +93,7 @@ episodes:
   - number: 22
     title: Running agents in parallel
     sources: [agents]
-    exercise: Start two independent sessions on two different tasks in the same project at once and confirm they do not collide on the same files.
+    exercise: Start two sessions on two different tasks in the same project, let both edit files, then run git status and work out which change came from which session.
   - number: 23
     title: Custom subagents
     sources: [sub-agents]
@@ -109,7 +109,7 @@ episodes:
   - number: 26
     title: Agent view and worktrees
     sources: [agent-view, worktrees]
-    exercise: Open Agent View while a session runs, then start a second task in a new worktree and confirm it cannot touch your main branch's files.
+    exercise: Open Agent View while a session runs, then start a second task in a worktree and run git worktree list from both. Note that they share one object store, so a commit in either is visible to the other immediately.
   - number: 27
     title: Headless mode
     sources: [headless]
@@ -121,7 +121,7 @@ episodes:
   - number: 29
     title: Keeping Claude on a goal
     sources: [goal]
-    exercise: Set an explicit goal for a multi-step task, let Claude self-correct once without your input, and note what it changed on its own.
+    exercise: Set an explicit goal for a multi-step task, then run the context command ten turns later and find whether the goal is still loaded or has been compacted away.
   - number: 30
     title: Channels and deep links
     sources: [channels, channels-reference, deep-links]
