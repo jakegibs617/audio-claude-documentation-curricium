@@ -63,12 +63,37 @@ def test_hyphenated_words_are_not_mistaken_for_flags():
     assert find_violations(prose) == []
 
 
-def test_detects_flags_wrapped_in_punctuation():
-    """A model told "no markdown" that still writes one inline backtick must not
-    slip past. `say` vocalizes the flag identically either way."""
-    for wrapper in ("`--print`", '"--print"', "(--print)", "[--print]"):
-        text = f"{CLEAN} Use the {wrapper} flag."
-        assert any("flag" in v for v in find_violations(text)), wrapper
+def test_detects_flags_behind_any_wrapper():
+    """Nothing but a word character makes a dash innocent.
+
+    An allowlist of wrappers is the wrong shape: it passes whatever nobody
+    thought to enumerate. `say` reads every one of these as "dash dash print".
+    """
+    wrapped = [
+        "`--print`", '"--print"', "(--print)", "[--print]", "{--print}",
+        "**--print**", "*--print*", "<--print>", ",--print", ":--print",
+        "=--print", ";--print", "/--print", "!--print", "~--print",
+    ]
+    for form in wrapped:
+        text = f"{CLEAN} Use the {form} flag."
+        assert any("flag" in v for v in find_violations(text)), form
+
+
+def test_doubled_unicode_dashes_are_flags_but_prose_em_dashes_are_not():
+    """A model that types en dashes still means a flag. But an em dash joined to
+    a word is ordinary prose and must never be a false positive."""
+    for dash in ("\u2013\u2013", "\u2014\u2014", "\u2011\u2011", "\u2212\u2212"):
+        assert find_violations(f"{CLEAN} Use {dash}print now."), dash
+
+    prose = CLEAN + " The model\u2014which reads the whole file\u2014has no memory."
+    assert find_violations(prose) == []
+
+
+def test_detects_tilde_fences_and_indented_code():
+    """Tilde fences and four-space indents are valid CommonMark that models emit,
+    and a JSON blob reaching the speech engine is the loud-failure case."""
+    assert any("code" in v for v in find_violations(CLEAN + '\n~~~json\n{"a":1}\n~~~'))
+    assert any("code" in v for v in find_violations(CLEAN + '\n\n    {"hooks": {}}\n'))
 
 
 def test_violation_names_the_offending_text():

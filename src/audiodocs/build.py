@@ -10,9 +10,9 @@ from pathlib import Path
 from .art import render_png
 from .feed import FeedError, build_feed
 from .fetch import fetch_doc
-from .manifest import Curriculum, Episode, load_curriculum
+from .manifest import Curriculum, Episode, ManifestError, load_curriculum
 from .script import build_script
-from .speak import synthesize
+from .speak import SpeakError, available_voices, synthesize
 from .tag import tag_audio
 
 DIAGRAMS = Path("diagrams")
@@ -23,10 +23,28 @@ def _stamp_path(episode: Episode, out_dir: Path) -> Path:
     return Path(out_dir) / "audio" / f"{episode.slug}.stamp"
 
 
-def _stamp(script: str, voice: str) -> str:
+def _diagram_fingerprint(episode: Episode) -> str:
+    """Identify the SVG an episode embeds, so editing it rebuilds the episode."""
+    if not episode.diagram:
+        return ""
+    svg = DIAGRAMS / f"{episode.diagram}.svg"
+    if not svg.exists():
+        return "missing"
+    return hashlib.sha256(svg.read_bytes()).hexdigest()
+
+
+def _stamp(script: str, curriculum: Curriculum, episode: Episode) -> str:
+    """Everything baked into the finished file.
+
+    Not just the script: the voice speaks it, the album is tagged into it, and
+    the diagram is embedded in it. Anything left out of this goes stale silently.
+    """
     digest = hashlib.sha256()
-    digest.update(script.encode())
-    digest.update(voice.encode())
+    for field in (
+        script, curriculum.voice, curriculum.album, _diagram_fingerprint(episode)
+    ):
+        digest.update(field.encode())
+        digest.update(b"\x00")
     return digest.hexdigest()
 
 
@@ -50,7 +68,7 @@ def _build_one(
 
     audio_path = out_dir / "audio" / f"{episode.slug}.m4a"
     stamp_path = _stamp_path(episode, out_dir)
-    stamp = _stamp(script, curriculum.voice)
+    stamp = _stamp(script, curriculum, episode)
     if audio_path.exists() and stamp_path.exists() and stamp_path.read_text() == stamp:
         return audio_path, True
 
@@ -158,6 +176,15 @@ def build_all(
         try:
             path, was_cached = _build_one(episode, curriculum, out_dir)
         except Exception as exc:  # noqa: BLE001 - isolate this episode's failure
+            # Say it now. A summary an hour from now cannot tell you that the
+            # run started failing on episode 2.
+            print(f"    FAILED episode {episode.number}: {exc}", file=sys.stderr,
+                  flush=True)
+            # A half-written file is not a deliverable and must not reach the
+            # feed, which lists whatever audio it finds.
+            audio_path = out_dir / "audio" / f"{episode.slug}.m4a"
+            audio_path.unlink(missing_ok=True)
+            _stamp_path(episode, out_dir).unlink(missing_ok=True)
             results.append(
                 EpisodeResult(
                     number=episode.number,
@@ -231,7 +258,25 @@ def main(argv: list[str] | None = None) -> int:
     curriculum = load_curriculum(args.curriculum)
     only = None if args.all else args.episode
 
-    report = build_all(curriculum, args.out, only=only)
+    # Check the voice before spending anything. It is used at the last stage of
+    # every episode, so without this one typo burns every model call in the run.
+    try:
+        if curriculum.voice not in available_voices():
+            print(
+                f"error: voice {curriculum.voice!r} is not installed. "
+                f"Run `say -v '?'` to see what is.",
+                file=sys.stderr,
+            )
+            return 1
+    except SpeakError as exc:
+        print(f"error: could not list voices: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        report = build_all(curriculum, args.out, only=only)
+    except ManifestError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     print(format_report(report))
 
     # The feed lists whatever audio exists, so it is worth regenerating even

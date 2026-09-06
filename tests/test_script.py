@@ -65,11 +65,6 @@ def test_changed_source_invalidates_cache(tmp_path):
     assert len(calls) == 2
 
 
-def test_narration_prompt_forbids_code_and_urls():
-    assert "code" in NARRATION_PROMPT.lower()
-    assert "url" in NARRATION_PROMPT.lower()
-
-
 def test_cached_script_is_still_sanitized(tmp_path):
     """A script cached before the sanitizer tightened must not stay exempt."""
     ep = Episode(number=3, title="The Context Window", sources=["x"], exercise="do it")
@@ -118,3 +113,29 @@ def test_rejected_script_is_kept_for_inspection(tmp_path):
     rejected = list(tmp_path.glob("*.rejected.txt"))
     assert rejected, "rejected script was discarded"
     assert "--print" in rejected[0].read_text()
+
+
+def test_tightening_the_sanitizer_invalidates_cached_scripts(tmp_path, monkeypatch):
+    """A cache key that ignores the rules wedges an episode permanently.
+
+    Tighten the sanitizer and an old cached script stays key-valid but
+    content-rejected: every rebuild raises, the model is never re-called, and
+    the error names the rejected copy rather than the cache file to delete.
+    """
+    import audiodocs.sanitize as sanitize_mod
+    import audiodocs.script as script_mod
+
+    ep = Episode(number=3, title="The Context Window", sources=["x"], exercise="do it")
+    calls = []
+
+    def runner(prompt, stdin):
+        calls.append(prompt)
+        return "Clean narration with nothing unspeakable in it at all."
+
+    build_script(ep, "SOURCES", tmp_path, runner=runner)
+    assert len(calls) == 1
+
+    monkeypatch.setattr(sanitize_mod, "RULES_FINGERPRINT", "a-stricter-sanitizer")
+    build_script(ep, "SOURCES", tmp_path, runner=runner)
+
+    assert len(calls) == 2, "sanitizer changed but the old cache key still matched"

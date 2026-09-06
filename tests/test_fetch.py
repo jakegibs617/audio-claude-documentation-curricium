@@ -1,5 +1,5 @@
 import pytest
-from audiodocs.fetch import doc_url, fetch_doc, FetchError
+from audiodocs.fetch import OfflineError, doc_url, fetch_doc, FetchError
 
 
 def test_doc_url_appends_md_suffix():
@@ -71,6 +71,62 @@ def test_network_failure_falls_back_to_the_stale_copy(tmp_path):
     os.utime(cached, (old, old))
 
     def offline(url):
-        raise FetchError("no network")
+        raise OfflineError("no network")
 
     assert fetch_doc("overview", tmp_path, opener=offline) == "CACHED BODY"
+
+
+def test_a_deleted_page_is_not_masked_by_a_stale_cache(tmp_path):
+    """The spec: a slug that 404s is reported, not silently skipped.
+
+    Being unreachable and being deleted look identical to a bare except, and
+    the second one means the manifest is now wrong.
+    """
+    import os
+    import time
+
+    fetch_doc("gone", tmp_path, opener=lambda url: "OLD BODY")
+    cached = tmp_path / "gone.md"
+    old = time.time() - 60 * 60 * 24 * 7
+    os.utime(cached, (old, old))
+
+    def deleted(url):
+        raise FetchError(f"{url} returned HTTP 404")
+
+    with pytest.raises(FetchError):
+        fetch_doc("gone", tmp_path, opener=deleted)
+
+
+def test_a_programming_error_is_not_swallowed(tmp_path):
+    """A mis-signatured opener must surface, not quietly serve stale bytes."""
+    import os
+    import time
+
+    fetch_doc("overview", tmp_path, opener=lambda url: "OLD BODY")
+    cached = tmp_path / "overview.md"
+    old = time.time() - 60 * 60 * 24 * 7
+    os.utime(cached, (old, old))
+
+    with pytest.raises(TypeError):
+        fetch_doc("overview", tmp_path, opener=lambda url, extra: "x")
+
+
+def test_offline_fallback_does_not_re_pay_the_timeout(tmp_path):
+    """93 unique slugs times a 30s timeout is 46 minutes of dead waiting."""
+    import os
+    import time
+
+    fetch_doc("overview", tmp_path, opener=lambda url: "BODY")
+    cached = tmp_path / "overview.md"
+    old = time.time() - 60 * 60 * 24 * 7
+    os.utime(cached, (old, old))
+
+    calls = []
+
+    def offline(url):
+        calls.append(url)
+        raise OfflineError("no network")
+
+    fetch_doc("overview", tmp_path, opener=offline)
+    fetch_doc("overview", tmp_path, opener=offline)
+    assert len(calls) == 1, "the stale copy was not refreshed after falling back"

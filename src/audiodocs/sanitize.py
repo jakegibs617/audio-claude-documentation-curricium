@@ -6,9 +6,13 @@ step. This module names them; it never silently repairs them.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 
-CODE_FENCE = re.compile(r"```")
+CODE_FENCE = re.compile(r"```|~~~")
+# Four-space indents are CommonMark code blocks. Spoken narration is continuous
+# prose, so an indented line is never legitimate here.
+INDENTED_CODE = re.compile(r"^ {4,}\S", re.MULTILINE)
 BARE_URL = re.compile(r"https?://\S+")
 TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$", re.MULTILINE)
 
@@ -24,11 +28,33 @@ DANGLING = re.compile(
     re.IGNORECASE,
 )
 
-# The character before the dash must not be alphanumeric, so hyphenated
-# compounds ("well-defined", "trade-offs") are safe -- but a flag wrapped in a
-# backtick, quote, or bracket is still a flag. `say` reads `--print` and
-# --print as bit-identical audio, so the wrapper must not buy an exemption.
-COMMAND_FLAG = re.compile(r"(?:^|[\s`\"'(\[{])(--?[a-zA-Z][\w-]*)")
+# Exclude, do not enumerate. Only a word character or another dash makes a dash
+# innocent -- that is what "well-defined" and "trade-offs" have and what a flag
+# never does. An allowlist of wrappers passes whatever nobody thought to list,
+# and `**--print**` is the likeliest deviation of all: a model told "no
+# markdown" still reaching for bold.
+COMMAND_FLAG = re.compile(r"(?<![\w-])(--?[a-zA-Z][\w-]*)")
+
+# Doubled typographic dashes are a flag someone's editor prettified. Single ones
+# are left alone: an em dash joined to a word is ordinary prose ("the
+# model—which reads the file—has no memory") and must never be a false positive.
+UNICODE_FLAG = re.compile(r"([\u2010-\u2015\u2212]{2}[a-zA-Z][\w-]*)")
+
+
+def _fingerprint() -> str:
+    """Identify the current rules, so a cache keyed on this expires when they
+    tighten. Hand-maintained version numbers get forgotten; the patterns cannot.
+    """
+    digest = hashlib.sha256()
+    for pattern in (
+        CODE_FENCE, INDENTED_CODE, BARE_URL, TABLE_ROW, DANGLING,
+        COMMAND_FLAG, UNICODE_FLAG,
+    ):
+        digest.update(pattern.pattern.encode())
+    return digest.hexdigest()[:16]
+
+
+RULES_FINGERPRINT = _fingerprint()
 
 
 class UnspeakableError(Exception):
@@ -49,10 +75,12 @@ def find_violations(text: str) -> list[str]:
     """
     checks = (
         (CODE_FENCE, "contains a code fence; code must be described, not read"),
+        (INDENTED_CODE, "contains an indented code block; code must be described"),
         (BARE_URL, "contains a URL; a spoken URL is unusable"),
         (TABLE_ROW, "contains a markdown table; tables must be prose"),
         (DANGLING, "contains a dangling reference to unseen content"),
         (COMMAND_FLAG, "contains a command flag; flags must be named in words"),
+        (UNICODE_FLAG, "contains a command flag; flags must be named in words"),
     )
 
     violations: list[str] = []

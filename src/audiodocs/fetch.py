@@ -18,6 +18,15 @@ class FetchError(Exception):
     """A documentation page could not be retrieved."""
 
 
+class OfflineError(FetchError):
+    """The network was unreachable.
+
+    Distinct from every other fetch failure because it is the only one a stale
+    cached copy is an acceptable answer to. A 404 means the page was deleted and
+    the manifest is now wrong -- serving the old copy hides that forever.
+    """
+
+
 def doc_url(slug: str) -> str:
     return f"{BASE}/{slug}.md"
 
@@ -29,8 +38,8 @@ def _default_opener(url: str) -> str:
             return response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         raise FetchError(f"{url} returned HTTP {exc.code}") from exc
-    except urllib.error.URLError as exc:
-        raise FetchError(f"{url} unreachable: {exc.reason}") from exc
+    except urllib.error.URLError as exc:  # network unreachable
+        raise OfflineError(f"{url} unreachable: {exc.reason}") from exc
 
 
 def fetch_doc(
@@ -50,8 +59,11 @@ def fetch_doc(
 
     try:
         text = (opener or _default_opener)(doc_url(slug))
-    except Exception:
+    except OfflineError:
         if cached.exists():
+            # Touch it: otherwise every slug re-pays the connection timeout on
+            # every build, which across 93 slugs is most of an hour of waiting.
+            cached.touch()
             return cached.read_text()
         raise
 

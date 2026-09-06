@@ -56,11 +56,27 @@ def _cache_key(episode: Episode, sources_text: str) -> str:
     digest = hashlib.sha256()
     # Hash the prompt itself, not a hand-maintained version string: editing the
     # prompt is the documented fix for bad narration and must actually rebuild.
-    digest.update(NARRATION_PROMPT.encode())
-    digest.update(episode.title.encode())
-    digest.update(episode.exercise.encode())
-    digest.update(sources_text.encode())
+    # The sanitizer's rules join it -- a script cached under looser rules would
+    # otherwise stay key-valid but content-rejected, wedging the episode.
+    # Fields are delimited so title "AB" + exercise "C" cannot collide with
+    # title "A" + exercise "BC".
+    for field in (
+        NARRATION_PROMPT,
+        sanitize_fingerprint(),
+        episode.title,
+        episode.exercise,
+        sources_text,
+    ):
+        digest.update(field.encode())
+        digest.update(b"\x00")
     return digest.hexdigest()[:16]
+
+
+def sanitize_fingerprint() -> str:
+    """Read through the module so tests can monkeypatch the rules."""
+    from . import sanitize
+
+    return sanitize.RULES_FINGERPRINT
 
 
 def _reject_unspeakable(script: str, episode: Episode, cache_dir: Path) -> None:

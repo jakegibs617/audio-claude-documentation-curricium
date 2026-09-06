@@ -266,3 +266,100 @@ def test_build_all_writes_a_feed(tmp_path, monkeypatch):
     assert feed.exists()
     channel = ET.parse(feed).getroot().find("channel")
     assert len(channel.findall("item")) == 1
+
+
+def test_a_bad_voice_fails_before_any_model_call(tmp_path, monkeypatch):
+    """The voice check lived inside synthesize, which runs after the model call.
+    One typo in curriculum.yaml burned all 43 calls for zero audio."""
+    import audiodocs.build as build_module
+
+    _stub_pipeline(monkeypatch, build_module)
+    monkeypatch.setattr(build_module, "available_voices", lambda: ("Samantha",))
+
+    calls = []
+    real = build_module.build_script
+    monkeypatch.setattr(
+        build_module, "build_script", lambda *a: calls.append(1) or real(*a)
+    )
+
+    rc = build_module.main(
+        ["--curriculum", str(_curriculum_with_voice(tmp_path, "Samanthaa")),
+         "--out", str(tmp_path), "--all"]
+    )
+    assert rc == 1
+    assert calls == [], "the model was called despite an unusable voice"
+
+
+def _curriculum_with_voice(tmp_path, voice):
+    path = tmp_path / "c.yaml"
+    path.write_text(
+        f"album: A\nvoice: {voice}\nepisodes:\n"
+        "  - number: 1\n    title: T\n    sources: [overview]\n"
+        "    exercise: Open a session and look at what loaded.\n"
+    )
+    return path
+
+
+def test_failures_are_reported_as_they_happen(tmp_path, monkeypatch, capsys):
+    """Progress output exists so a hang is distinguishable from work. If failures
+    only surface in the final summary, a totally failing hour-long build looks
+    exactly like a healthy one until it ends."""
+    import audiodocs.build as build_module
+
+    _stub_pipeline(monkeypatch, build_module, fail_titles={"Prompt caching"})
+    curriculum = load_curriculum(Path("curriculum.yaml"))
+    build_module.build_all(curriculum, tmp_path, only=[2, 4])
+
+    assert "FAILED" in capsys.readouterr().err
+
+
+def test_a_changed_diagram_rebuilds_the_episode(tmp_path, monkeypatch):
+    """INTENT.md names diagrams as a kept asset. If the stamp ignores them, an
+    edited diagram never reaches the audio it is embedded in."""
+    import audiodocs.build as build_module
+
+    synth_calls = _stub_pipeline(monkeypatch, build_module)
+    curriculum = load_curriculum(Path("curriculum.yaml"))
+    svg = Path("diagrams/ep03-context-window.svg")
+
+    monkeypatch.setattr(build_module, "_diagram_fingerprint", lambda ep: "first")
+    build_module.build_all(curriculum, tmp_path, only=[3])
+    monkeypatch.setattr(build_module, "_diagram_fingerprint", lambda ep: "edited")
+    report = build_module.build_all(curriculum, tmp_path, only=[3])
+
+    assert len(synth_calls) == 2, "edited diagram left the old episode in place"
+    assert len(report.built) == 1
+
+
+def test_a_failed_episode_is_not_advertised_in_the_feed(tmp_path, monkeypatch):
+    """synthesize writes the .m4a before tagging. If tagging fails, the audio is
+    on disk but incomplete -- the feed must not enclose it."""
+    import xml.etree.ElementTree as ET
+
+    import audiodocs.build as build_module
+
+    _stub_pipeline(monkeypatch, build_module)
+    monkeypatch.setattr(
+        build_module,
+        "tag_audio",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("tagging blew up")),
+    )
+
+    rc = build_module.main(
+        ["--curriculum", "curriculum.yaml", "--out", str(tmp_path),
+         "--episode", "3", "--base-url", "https://x.test/a/"]
+    )
+
+    assert rc == 1
+    channel = ET.parse(tmp_path / "feed.xml").getroot().find("channel")
+    assert channel.findall("item") == [], "feed advertised a failed episode"
+
+
+def test_unknown_episode_number_is_an_error_not_a_traceback(tmp_path, monkeypatch):
+    import audiodocs.build as build_module
+
+    _stub_pipeline(monkeypatch, build_module)
+    rc = build_module.main(
+        ["--curriculum", "curriculum.yaml", "--out", str(tmp_path), "--episode", "99"]
+    )
+    assert rc == 1
