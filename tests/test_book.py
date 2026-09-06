@@ -72,3 +72,23 @@ def test_produces_a_playable_audiobook_with_chapters(tmp_path, curriculum):
     assert probe.count("chapter") == 3
     for number in (1, 2, 3):
         assert curriculum.episode(number).title in probe
+
+
+@pytest.mark.smoke
+def test_a_broken_cover_does_not_cost_you_the_audiobook(tmp_path, curriculum):
+    """Artwork degrades; audio does not. A corrupt cover should lose the
+    picture, not 6h49m of narration."""
+    audio = tmp_path / "audio"
+    for number in (1, 2):
+        _silence(audio / f"{curriculum.episode(number).slug}.m4a", 1.0)
+    bad_cover = tmp_path / "cover.png"
+    bad_cover.write_bytes(b"not actually a png")
+
+    out = build_audiobook(curriculum, audio, tmp_path / "b.m4b", cover=bad_cover)
+    assert out.exists()
+
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_chapters", "-of", "csv", str(out)],
+        capture_output=True, text=True,
+    ).stdout
+    assert probe.count("chapter") == 2

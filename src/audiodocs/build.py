@@ -311,12 +311,21 @@ def main(argv: list[str] | None = None) -> int:
     # remembers a position across the whole thing, which 43 separate tracks
     # cannot. Like the feed, it lists whatever exists and never masks a failure.
     try:
-        art = sorted((args.out / "art").glob("*.png"))
+        # Name the cover explicitly. Globbing would hand the job to whichever
+        # diagram happens to sort first, and the cover is the one image seen
+        # every time the book is opened.
+        cover = args.out / "art" / "cover.png"
+        cover_svg = DIAGRAMS / "cover.svg"
+        if not cover.exists() and cover_svg.exists():
+            try:
+                render_png(cover_svg, cover)
+            except Exception as exc:  # noqa: BLE001 - a coverless book still plays
+                print(f"warning: cover not rendered: {exc}", file=sys.stderr)
         book = build_audiobook(
             curriculum,
             args.out / "audio",
             args.out / "claude-code-narrated.m4b",
-            cover=art[0] if art else None,
+            cover=cover if cover.exists() else None,
         )
         print(f"audiobook: {book}")
     except BookError as exc:

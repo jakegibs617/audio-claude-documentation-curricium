@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1400" viewBox="0 0 1400 1400">
+  <rect width="1400" height="1400" fill="#1a1a1a"/>
+
+  <rect x="620" y="248" width="160" height="7" fill="#e0a030"/>
+
+  <text x="700" y="500" text-anchor="middle" fill="#ffffff"
+        font-family="Helvetica, sans-serif" font-size="146" font-weight="bold"
+        letter-spacing="2">CLAUDE CODE</text>
+  <text x="700" y="662" text-anchor="middle" fill="#e0a030"
+        font-family="Helvetica, sans-serif" font-size="146" font-weight="bold"
+        letter-spacing="16">NARRATED</text>
+
+  <!-- The context window as one filled bar: the course's central mental model.
+       Sized to the title's optical width and tall enough to hold at
+       library-thumbnail scale, where a thin strip disappears. -->
+  <g>
+    <rect x="165" y="800" width="165" height="130" fill="#4a6fa5"/>
+    <rect x="330" y="800" width="135" height="130" fill="#5a8a6f"/>
+    <rect x="465" y="800" width="200" height="130" fill="#7a5a7a"/>
+    <rect x="665" y="800" width="335" height="130" fill="#8a7a4a"/>
+    <rect x="1000" y="800" width="235" height="130" fill="#2a2a2a"/>
+    <rect x="165" y="800" width="1070" height="130" fill="none"
+          stroke="#4a4a4a" stroke-width="3"/>
+    <line x1="1000" y1="774" x2="1000" y2="956" stroke="#e0a030"
+          stroke-width="7" stroke-dasharray="16 10"/>
+  </g>
+
+  <text x="700" y="1058" text-anchor="middle" fill="#b0b0b0"
+        font-family="Helvetica, sans-serif" font-size="47">The documentation, rewritten to be heard</text>
+  <text x="700" y="1146" text-anchor="middle" fill="#8a8a8a"
+        font-family="Helvetica, sans-serif" font-size="40"
+        letter-spacing="7">43 EPISODES</text>
+</svg>

@@ -428,3 +428,30 @@ def test_build_all_writes_an_audiobook(tmp_path, monkeypatch):
         capture_output=True, text=True,
     ).stdout
     assert probe.count("chapter") == 2
+
+
+def test_the_audiobook_uses_the_cover_not_whichever_png_sorts_first(tmp_path, monkeypatch):
+    """The cover is the thing you tap 43 times. Picking it by glob order means a
+    new diagram named earlier in the alphabet silently becomes the cover."""
+    import audiodocs.build as build_module
+
+    seen = {}
+
+    def fake_book(curriculum, audio_dir, out_path, cover=None):
+        seen["cover"] = cover
+        Path(out_path).write_bytes(b"book")
+        return Path(out_path)
+
+    _stub_pipeline(monkeypatch, build_module)
+    monkeypatch.setattr(build_module, "build_audiobook", fake_book)
+    # A diagram that sorts before "cover.png" must not win.
+    art = tmp_path / "art"
+    art.mkdir(parents=True)
+    (art / "aaa-some-diagram.png").write_bytes(b"png")
+
+    build_module.main(
+        ["--curriculum", "curriculum.yaml", "--out", str(tmp_path),
+         "--episode", "1", "--base-url", "https://x.test/a/"]
+    )
+    assert seen["cover"] is not None
+    assert seen["cover"].name == "cover.png"

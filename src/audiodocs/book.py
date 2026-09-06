@@ -112,23 +112,34 @@ def build_audiobook(
         meta = tmp / "meta.txt"
         meta.write_text(_metadata(curriculum, chapters))
 
-        command = [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-f", "concat", "-safe", "0", "-i", str(listing),
-            "-i", str(meta),
-        ]
-        if cover and Path(cover).exists():
-            command += ["-i", str(cover)]
+        use_cover = bool(cover) and Path(cover).exists()
+        result = _run(listing, meta, out_path, cover if use_cover else None)
 
-        command += ["-map_metadata", "1", "-map_chapters", "1", "-map", "0:a"]
-        if cover and Path(cover).exists():
-            command += ["-map", "2:v", "-c:v", "copy",
-                        "-disposition:v", "attached_pic"]
-        command += ["-c:a", "copy", str(out_path)]
-
-        result = subprocess.run(command, capture_output=True, text=True,
-                                timeout=1800)
+        if result.returncode != 0 and use_cover:
+            # Artwork degrades; audio does not. An unreadable cover should cost
+            # the picture, not six hours of narration.
+            print(
+                f"warning: cover rejected, building without it: "
+                f"{result.stderr.strip()[:200]}"
+            )
+            result = _run(listing, meta, out_path, None)
 
     if result.returncode != 0 or not out_path.exists():
         raise BookError(f"ffmpeg failed: {result.stderr.strip()[:400]}")
     return out_path
+
+
+def _run(listing: Path, meta: Path, out_path: Path, cover: Path | None):
+    command = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-f", "concat", "-safe", "0", "-i", str(listing),
+        "-i", str(meta),
+    ]
+    if cover:
+        command += ["-i", str(cover)]
+    command += ["-map_metadata", "1", "-map_chapters", "1", "-map", "0:a"]
+    if cover:
+        command += ["-map", "2:v", "-c:v", "copy",
+                    "-disposition:v", "attached_pic"]
+    command += ["-c:a", "copy", str(out_path)]
+    return subprocess.run(command, capture_output=True, text=True, timeout=1800)
