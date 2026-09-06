@@ -15,7 +15,11 @@ def write(tmp_path: Path, body: str) -> Path:
 
 VALID = """
 album: Claude Code, Narrated
-voice: Samantha
+pace: 165
+cast:
+  narrator: af_heart
+  tradeoff: bf_emma
+  exercise: am_michael
 episodes:
   - number: 3
     title: The context window
@@ -32,7 +36,7 @@ episodes:
 def test_loads_valid_curriculum(tmp_path):
     c = load_curriculum(write(tmp_path, VALID))
     assert c.album == "Claude Code, Narrated"
-    assert c.voice == "Samantha"
+    assert c.cast["narrator"] == "af_heart"
     assert len(c.episodes) == 2
     assert c.episodes[0].number == 3
     assert c.episodes[0].sources == ["context-window"]
@@ -105,10 +109,55 @@ def test_unspeakable_exercise_is_a_manifest_error(tmp_path):
     """Catch it at load, in microseconds, not per-episode after payment."""
     path = tmp_path / "c.yaml"
     path.write_text(
-        "album: A\nvoice: Samantha\nepisodes:\n"
+        "album: A\npace: 165\ncast:\n  narrator: af_heart\n  tradeoff: bf_emma\n  exercise: am_michael\nepisodes:\n"
         "  - number: 1\n    title: T\n    sources: [x]\n"
         "    exercise: Run ls -R and look at it.\n"
     )
     with pytest.raises(ManifestError) as exc:
         load_curriculum(path)
     assert "-R" in str(exc.value)
+
+
+def _yaml(tmp_path, body):
+    path = tmp_path / "c.yaml"
+    path.write_text(body)
+    return path
+
+
+CAST_BODY = (
+    "album: A\npace: 165\n"
+    "cast:\n  narrator: af_heart\n  tradeoff: bf_emma\n  exercise: am_michael\n"
+    "episodes:\n  - number: 1\n    title: T\n    sources: [x]\n"
+    "    exercise: Open a session and look at what loaded.\n"
+)
+
+
+def test_loads_the_cast_and_pace(tmp_path):
+    c = load_curriculum(_yaml(tmp_path, CAST_BODY))
+    assert c.cast == {"narrator": "af_heart", "tradeoff": "bf_emma",
+                      "exercise": "am_michael"}
+    assert c.pace == 165
+
+
+def test_a_cast_missing_a_role_is_an_error(tmp_path):
+    """A script can label any role, so every role needs a voice before the
+    build starts -- not partway through episode 9."""
+    body = CAST_BODY.replace("  exercise: am_michael\n", "")
+    with pytest.raises(ManifestError) as exc:
+        load_curriculum(_yaml(tmp_path, body))
+    assert "exercise" in str(exc.value)
+
+
+def test_an_unknown_cast_role_is_an_error(tmp_path):
+    body = CAST_BODY.replace("  tradeoff: bf_emma", "  tradeof: bf_emma")
+    with pytest.raises(ManifestError) as exc:
+        load_curriculum(_yaml(tmp_path, body))
+    assert "tradeof" in str(exc.value)
+
+
+def test_the_real_curriculum_defines_a_full_cast():
+    c = load_curriculum(Path("curriculum.yaml"))
+    from audiodocs.segments import ROLES
+
+    assert set(c.cast) == set(ROLES)
+    assert 140 <= c.pace <= 200

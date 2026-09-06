@@ -1,87 +1,144 @@
-"""Text to speech.
+"""Turn role-labelled segments into a single audio file.
 
-The only module permitted to invoke a speech engine. Swapping macOS `say` for a
-paid API means replacing `_synthesize_aiff` and nothing else.
+The only module permitted to invoke a speech engine. Everything above it deals
+in text and roles; swapping vendors is a change to this file alone.
+
+The engine is Kokoro (Apache-2.0, runs locally). It is imported lazily so the
+test suite -- which injects a stand-in engine -- never loads a 350MB model.
 """
 from __future__ import annotations
 
-import re
+import os
 import subprocess
-from functools import lru_cache
+import tempfile
 from pathlib import Path
+
+from .segments import Segment
+
+# Measured at speed 1.0 on a 222-word passage of real episode narration.
+# Calibrating on a short clip gives numbers 15-20% too high: most of the
+# difference is sentence-boundary pauses, which a two-sentence sample never
+# exercises and which scale with the text. Kokoro's speed parameter scales
+# duration, so the factor to hit a target pace is target / natural.
+NATURAL_WPM = {
+    "af_heart": 182,
+    "af_bella": 179,
+    "bf_emma": 195,
+    "am_michael": 169,
+    "am_fenrir": 219,
+}
+
+SAMPLE_RATE = 24000
+# A beat between speakers. Butt-joining two voices sounds like a splice; this
+# reads as a deliberate handover.
+GAP_SECONDS = 0.65
+
+# espeakng-loader ships a path from its own build machine, which does not exist
+# here. Point it at the Homebrew install instead.
+ESPEAK_DATA = "/opt/homebrew/share/espeak-ng-data"
+ESPEAK_LIB = "/opt/homebrew/lib/libespeak-ng.dylib"
 
 
 class SpeakError(Exception):
-    """Speech synthesis failed."""
+    """Audio could not be synthesized."""
 
 
-# "<name>  <locale>  # <sample>" -- the locale is the only dependable column.
-VOICE_LINE = re.compile(r"^(.+?)\s+[a-z]{2,3}[_-][A-Za-z0-9]{2,3}\s")
+def speed_for(voice: str, pace: int) -> float:
+    """The engine speed that makes `voice` speak at roughly `pace` words/minute.
 
-
-def _parse_voices(listing: str) -> tuple[str, ...]:
-    """Voice names from `say -v \'?\'` output.
-
-    Names contain spaces and parentheses ("Bad News", "Eddy (English (US))"),
-    and the column gap before the locale can be a single space, so neither
-    `split()` nor a two-space column split works. The locale token is the only
-    reliable anchor: the name is everything before it.
+    Clamped: a pace far from a voice's natural rate destroys it, and shipping
+    43 episodes of chipmunk is worse than refusing the extreme.
     """
-    names = []
-    for line in listing.splitlines():
-        match = VOICE_LINE.match(line)
-        if match:
-            names.append(match.group(1).strip())
-    return tuple(names)
+    natural = NATURAL_WPM.get(voice)
+    if natural is None:
+        raise SpeakError(f"{voice!r} is not a known voice")
+    return max(0.5, min(2.0, pace / natural))
 
 
-@lru_cache(maxsize=1)
-def available_voices() -> tuple[str, ...]:
-    result = subprocess.run(["say", "-v", "?"], capture_output=True, text=True)
-    if result.returncode != 0:
-        raise SpeakError("could not list voices")
-    return _parse_voices(result.stdout)
+def _kokoro_engine():
+    """Build the real engine. Imported here so tests never pay for it."""
+    os.environ.setdefault("ESPEAK_DATA_PATH", ESPEAK_DATA)
+    os.environ.setdefault("PHONEMIZER_ESPEAK_LIBRARY", ESPEAK_LIB)
+    try:
+        import espeakng_loader
 
-
-def _synthesize_aiff(text: str, aiff: Path, voice: str) -> None:
-    result = subprocess.run(
-        ["say", "-v", voice, "-o", str(aiff), text],
-        capture_output=True,
-        text=True,
-        timeout=1800,
-    )
-    if result.returncode != 0:
-        raise SpeakError(f"say failed: {result.stderr.strip()}")
-
-
-def _to_m4a(aiff: Path, m4a: Path) -> None:
-    result = subprocess.run(
-        ["afconvert", "-f", "m4af", "-d", "aac", "-b", "64000", str(aiff), str(m4a)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise SpeakError(f"afconvert failed: {result.stderr.strip()}")
-
-
-def synthesize(text: str, out_path: Path, voice: str = "Samantha") -> Path:
-    """Render `text` to an audio file at `out_path`."""
-    if not text.strip():
-        raise SpeakError("refusing to synthesize empty text")
-    if voice not in available_voices():
+        if Path(ESPEAK_DATA).exists():
+            espeakng_loader.get_data_path = lambda: ESPEAK_DATA
+            espeakng_loader.get_library_path = lambda: ESPEAK_LIB
+        import numpy as np
+        from kokoro import KPipeline
+    except ImportError as exc:  # pragma: no cover - environment problem
         raise SpeakError(
-            f"voice not installed: {voice}. "
-            f"Install it in System Settings, Accessibility, Spoken Content."
-        )
+            f"the speech engine is not installed: {exc}. "
+            "Install with: uv pip install kokoro soundfile "
+            "&& brew install espeak-ng"
+        ) from exc
+
+    pipeline = KPipeline(lang_code="a")
+
+    def engine(text: str, voice: str, speed: float):
+        chunks = [c.audio.numpy() for c in pipeline(text, voice=voice, speed=speed)]
+        if not chunks:
+            raise SpeakError(f"engine returned no audio for {voice!r}")
+        return np.concatenate(chunks)
+
+    return engine
+
+
+def synthesize_segments(
+    segments: list[Segment],
+    cast: dict[str, str],
+    pace: int,
+    out_path: Path,
+    engine=None,
+) -> Path:
+    """Speak each segment in its role's voice and join them into one file."""
+    import numpy as np
+
+    if not segments:
+        raise SpeakError("nothing to speak: segment list is empty")
+
+    # Validate the whole cast before synthesizing anything. Discovering a bad
+    # voice on the last segment wastes every segment before it.
+    for segment in segments:
+        voice = cast.get(segment.role)
+        if voice is None:
+            raise SpeakError(f"no voice cast for the {segment.role!r} role")
+        speed_for(voice, pace)
+
+    engine = engine or _kokoro_engine()
+    gap = np.zeros(int(SAMPLE_RATE * GAP_SECONDS), dtype="float32")
+
+    pieces = []
+    for index, segment in enumerate(segments):
+        voice = cast[segment.role]
+        audio = engine(segment.text, voice, speed_for(voice, pace))
+        pieces.append(np.asarray(audio, dtype="float32"))
+        if index < len(segments) - 1:
+            pieces.append(gap)
+
+    return _write(np.concatenate(pieces), out_path)
+
+
+def _write(audio, out_path: Path) -> Path:
+    """Write float samples out as AAC in an MP4 container.
+
+    afconvert refuses 24 kHz float input, so the intermediate is 16-bit PCM and
+    the encoder is told to resample to 44.1 kHz.
+    """
+    import soundfile as sf
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    aiff = out_path.with_suffix(".aiff")
 
-    try:
-        _synthesize_aiff(text, aiff, voice)
-        _to_m4a(aiff, out_path)
-    finally:
-        aiff.unlink(missing_ok=True)
-
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = Path(tmp) / "raw.wav"
+        sf.write(wav, audio, SAMPLE_RATE, subtype="PCM_16")
+        result = subprocess.run(
+            ["afconvert", "-f", "m4af", "-d", "aac@44100", "-b", "64000",
+             str(wav), str(out_path)],
+            capture_output=True, text=True, timeout=600,
+        )
+    if result.returncode != 0 or not out_path.exists():
+        raise SpeakError(f"afconvert failed: {result.stderr.strip()[:300]}")
     return out_path

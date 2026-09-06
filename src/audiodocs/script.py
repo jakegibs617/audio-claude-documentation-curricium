@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .manifest import Episode
 from .sanitize import UnspeakableError, assert_speakable
+from .segments import SegmentError, parse_segments, spoken_text
 
 
 NARRATION_PROMPT = """\
@@ -30,6 +31,14 @@ Name flags in words: "the print flag", "the resume flag".
 - Explain the mental model and the trade-offs, not the syntax.
 - Close by stating the exercise as something to go and do.
 - Target between 1200 and 1800 words.
+
+Structure. Different voices read different parts, so label every block by starting a line with one of these, followed by a colon:
+
+NARRATOR: the explanation. Most of the episode is this.
+TRADEOFF: the cost, limit, or catch -- what this thing takes away, or when it is the wrong choice. Use it once or twice, only where there is a real trade-off to name. Do not force one.
+EXERCISE: the closing call to action. Exactly one, and it must be last.
+
+The labels are stage directions and are never read aloud, so do not refer to them and do not write anything else in capitals followed by a colon.
 
 Output only the script. No preamble, no commentary.
 """
@@ -101,15 +110,18 @@ def sanitize_fingerprint() -> str:
     return sanitize.RULES_FINGERPRINT
 
 
-def _reject_unspeakable(script: str, episode: Episode, cache_dir: Path) -> None:
+def _reject_unspeakable(script: str, episode: Episode, cache_dir: Path) -> None:  # noqa: D401
     """Raise if `script` cannot be spoken, keeping the text for inspection.
 
     A rejection has already cost a model call. Discarding the script would cost
     another just to see what was wrong with it.
     """
     try:
-        assert_speakable(script)
-    except UnspeakableError as exc:
+        # Check what is actually heard. The role labels are stage directions,
+        # stripped before synthesis, so they are not the sanitizer's business --
+        # but a malformed script is, and parse_segments raises on one.
+        assert_speakable(spoken_text(parse_segments(script)))
+    except (UnspeakableError, SegmentError) as exc:
         cache_dir.mkdir(parents=True, exist_ok=True)
         rejected = cache_dir / f"{episode.slug}.rejected.txt"
         rejected.write_text(script)

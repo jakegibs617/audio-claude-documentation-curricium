@@ -1,5 +1,9 @@
 album: Claude Code, Narrated
-voice: Samantha
+pace: 165
+cast:
+  narrator: af_heart
+  tradeoff: bf_emma
+  exercise: am_michael
 episodes:
   - number: 1
     title: What all of this is called

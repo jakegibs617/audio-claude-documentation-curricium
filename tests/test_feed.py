@@ -16,7 +16,13 @@ def qn(tag: str) -> str:
 
 
 def make_curriculum(episodes):
-    return Curriculum(album="Claude Code, Narrated", voice="Samantha", episodes=episodes)
+    return Curriculum(
+        album="Claude Code, Narrated",
+        cast={"narrator": "af_heart", "tradeoff": "bf_emma",
+              "exercise": "am_michael"},
+        pace=165,
+        episodes=episodes,
+    )
 
 
 # Deliberately out of number order, and one episode ("9") is never built.

@@ -11,8 +11,10 @@ EPISODE = Episode(
 )
 
 GOOD = (
-    "The context window is not a filing cabinet, it is a desk. Everything Claude "
-    "can see sits there at once. When it fills, older turns get summarized."
+    "NARRATOR: The context window is not a filing cabinet, it is a desk. "
+    "Everything Claude can see sits there at once. When it fills, older turns "
+    "get summarized.\n\n"
+    "EXERCISE: Run the context command and read the breakdown out loud."
 )
 
 
@@ -71,7 +73,9 @@ def test_cached_script_is_still_sanitized(tmp_path):
     cache = tmp_path / "scripts"
     cache.mkdir()
     key = build_script.__globals__["_cache_key"](ep, "SOURCES", None)
-    (cache / f"{ep.slug}-{key}.txt").write_text("Use the `--print` flag.")
+    (cache / f"{ep.slug}-{key}.txt").write_text(
+        "NARRATOR: Use the `--print` flag.\n\nEXERCISE: Go and try it."
+    )
 
     def never(prompt, stdin):
         raise AssertionError("model must not be called on a cache hit")
@@ -90,7 +94,7 @@ def test_editing_the_prompt_invalidates_the_cache(tmp_path):
 
     def runner(prompt, stdin):
         calls.append(prompt)
-        return "Clean narration that says nothing unspeakable at all."
+        return "NARRATOR: Clean narration that says nothing unspeakable at all.\n\nEXERCISE: Go and try it."
 
     original = script_mod.NARRATION_PROMPT
     try:
@@ -108,7 +112,7 @@ def test_rejected_script_is_kept_for_inspection(tmp_path):
     ep = Episode(number=3, title="The Context Window", sources=["x"], exercise="do it")
 
     with pytest.raises(ScriptError):
-        build_script(ep, "SOURCES", tmp_path, runner=lambda p, s: "Use --print now.")
+        build_script(ep, "SOURCES", tmp_path, runner=lambda p, s: "NARRATOR: Use --print now.\n\nEXERCISE: Go do it.")
 
     rejected = list(tmp_path.glob("*.rejected.txt"))
     assert rejected, "rejected script was discarded"
@@ -130,7 +134,7 @@ def test_tightening_the_sanitizer_invalidates_cached_scripts(tmp_path, monkeypat
 
     def runner(prompt, stdin):
         calls.append(prompt)
-        return "Clean narration with nothing unspeakable in it at all."
+        return "NARRATOR: Clean narration that says nothing unspeakable at all.\n\nEXERCISE: Go and try it."
 
     build_script(ep, "SOURCES", tmp_path, runner=runner)
     assert len(calls) == 1
@@ -150,7 +154,7 @@ def test_the_prompt_names_the_actual_previous_episode(tmp_path):
 
     build_script(
         ep, "SOURCES", tmp_path,
-        runner=lambda p, s: seen.append(p) or "Clean narration, nothing unspeakable.",
+        runner=lambda p, s: seen.append(p) or "NARRATOR: Clean narration that says nothing unspeakable at all.\n\nEXERCISE: Go and try it.",
         previous_title="The context window",
     )
     assert "The context window" in seen[0]
@@ -164,7 +168,7 @@ def test_the_first_episode_is_told_to_open_cold(tmp_path):
 
     build_script(
         ep, "SOURCES", tmp_path,
-        runner=lambda p, s: seen.append(p) or "Clean narration, nothing unspeakable.",
+        runner=lambda p, s: seen.append(p) or "NARRATOR: Clean narration that says nothing unspeakable at all.\n\nEXERCISE: Go and try it.",
         previous_title=None,
     )
     assert "first episode" in seen[0].lower()
@@ -174,8 +178,45 @@ def test_the_previous_episode_is_part_of_the_cache_key(tmp_path):
     """Reordering the curriculum changes every opening line."""
     ep = Episode(number=4, title="Prompt caching", sources=["x"], exercise="do it")
     calls = []
-    runner = lambda p, s: calls.append(p) or "Clean narration, nothing unspeakable."
+    runner = lambda p, s: calls.append(p) or "NARRATOR: Clean narration that says nothing unspeakable at all.\n\nEXERCISE: Go and try it."
 
     build_script(ep, "SOURCES", tmp_path, runner=runner, previous_title="A")
     build_script(ep, "SOURCES", tmp_path, runner=runner, previous_title="B")
     assert len(calls) == 2
+
+
+LABELLED = (
+    "NARRATOR: Last time we covered skills, and today we take on hooks.\n\n"
+    "TRADEOFF: What a hook costs you is selectivity.\n\n"
+    "EXERCISE: Add a hook that logs every Bash command.\n"
+)
+
+
+def test_the_prompt_asks_for_role_labels(tmp_path):
+    ep = Episode(number=8, title="Hooks", sources=["x"], exercise="do it")
+    seen = []
+    build_script(ep, "SOURCES", tmp_path,
+                 runner=lambda p, s: seen.append(p) or LABELLED)
+    assert "NARRATOR:" in seen[0] and "EXERCISE:" in seen[0]
+
+
+def test_an_unlabelled_script_is_rejected(tmp_path):
+    """Loud failure. Without labels there is nothing to cast, and one giant
+    unattributed block would be spoken entirely by the narrator by accident."""
+    ep = Episode(number=8, title="Hooks", sources=["x"], exercise="do it")
+    with pytest.raises(ScriptError) as exc:
+        build_script(ep, "SOURCES", tmp_path,
+                     runner=lambda p, s: "Just prose, no roles at all here.")
+    assert "label" in str(exc.value).lower() or "role" in str(exc.value).lower()
+
+
+def test_the_sanitizer_checks_spoken_text_not_the_labels(tmp_path):
+    """The labels are stage directions and are never spoken, so they are not the
+    sanitizer's business -- but everything else still is."""
+    ep = Episode(number=8, title="Hooks", sources=["x"], exercise="do it")
+    build_script(ep, "SOURCES", tmp_path, runner=lambda p, s: LABELLED)
+
+    bad = LABELLED.replace("selectivity.", "selectivity. Pass the --print flag.")
+    with pytest.raises(ScriptError) as exc:
+        build_script(ep, "OTHER SOURCES", tmp_path, runner=lambda p, s: bad)
+    assert "--print" in str(exc.value)

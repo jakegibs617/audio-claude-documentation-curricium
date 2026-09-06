@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 from .sanitize import find_violations
+from .segments import ROLES
 
 
 class ManifestError(Exception):
@@ -33,7 +34,8 @@ class Episode:
 @dataclass(frozen=True)
 class Curriculum:
     album: str
-    voice: str
+    cast: dict[str, str]
+    pace: int
     episodes: list[Episode]
 
     def episode(self, number: int) -> Episode:
@@ -93,8 +95,23 @@ def load_curriculum(path: Path) -> Curriculum:
             )
         )
 
+    cast = data.get("cast") or {}
+    if not isinstance(cast, dict):
+        raise ManifestError("cast must be a mapping of role to voice")
+    for role in cast:
+        if role not in ROLES:
+            raise ManifestError(
+                f"unknown cast role {role!r}; expected one of {', '.join(ROLES)}"
+            )
+    # Every role needs a voice before the build starts. A script may label any
+    # of them, and discovering a gap partway through episode 9 costs the run.
+    for role in ROLES:
+        if not cast.get(role):
+            raise ManifestError(f"cast is missing a voice for the {role!r} role")
+
     return Curriculum(
         album=data.get("album", "Claude Code, Narrated"),
-        voice=data.get("voice", "Samantha"),
+        cast=cast,
+        pace=int(data.get("pace", 165)),
         episodes=episodes,
     )

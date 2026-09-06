@@ -14,11 +14,14 @@ def _stub_pipeline(monkeypatch, build_module, fail_titles=None):
     def fake_build_script(ep, text, cache_dir, previous_title=None):
         if ep.title in fail_titles:
             raise RuntimeError(f"synthetic failure for {ep.title}")
-        return f"Narration text, long enough, with no code or urls in it. {ep.exercise}"
+        return (
+            "NARRATOR: Narration text, long enough, with no code or urls in it.\n\n"
+            f"EXERCISE: {ep.exercise}"
+        )
 
     synth_calls: list[Path] = []
 
-    def fake_synthesize(text, out_path, voice="Samantha"):
+    def fake_synthesize(segments, cast, pace, out_path):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(b"fake-audio-bytes")
@@ -35,7 +38,7 @@ def _stub_pipeline(monkeypatch, build_module, fail_titles=None):
         build_module, "fetch_doc", lambda slug, cache_dir: f"# {slug}\n\nBody."
     )
     monkeypatch.setattr(build_module, "build_script", fake_build_script)
-    monkeypatch.setattr(build_module, "synthesize", fake_synthesize)
+    monkeypatch.setattr(build_module, "synthesize_segments", fake_synthesize)
     monkeypatch.setattr(build_module, "render_png", fake_render_png)
     monkeypatch.setattr(build_module, "tag_audio", lambda *a, **k: None)
 
@@ -55,7 +58,8 @@ def test_builds_an_episode_from_cached_inputs(tmp_path, monkeypatch):
     monkeypatch.setattr(build_module, "fetch_doc",
                         lambda slug, cache_dir: f"# {slug}\n\nBody.")
     monkeypatch.setattr(build_module, "build_script",
-                        lambda ep, text, cache_dir, previous_title=None: narration)
+                        lambda ep, text, cache_dir, previous_title=None:
+                        f"NARRATOR: {narration}\n\nEXERCISE: Go do it.")
 
     curriculum = load_curriculum(Path("curriculum.yaml"))
     episode = curriculum.episode(3)
@@ -270,11 +274,10 @@ def test_build_all_writes_a_feed(tmp_path, monkeypatch):
 
 def test_a_bad_voice_fails_before_any_model_call(tmp_path, monkeypatch):
     """The voice check lived inside synthesize, which runs after the model call.
-    One typo in curriculum.yaml burned all 43 calls for zero audio."""
+    One typo in the cast burned all 43 calls for zero audio."""
     import audiodocs.build as build_module
 
     _stub_pipeline(monkeypatch, build_module)
-    monkeypatch.setattr(build_module, "available_voices", lambda: ("Samantha",))
 
     calls = []
     real = build_module.build_script
@@ -285,7 +288,7 @@ def test_a_bad_voice_fails_before_any_model_call(tmp_path, monkeypatch):
     )
 
     rc = build_module.main(
-        ["--curriculum", str(_curriculum_with_voice(tmp_path, "Samanthaa")),
+        ["--curriculum", str(_curriculum_with_voice(tmp_path, "af_hearrt")),
          "--out", str(tmp_path), "--all"]
     )
     assert rc == 1
@@ -295,7 +298,9 @@ def test_a_bad_voice_fails_before_any_model_call(tmp_path, monkeypatch):
 def _curriculum_with_voice(tmp_path, voice):
     path = tmp_path / "c.yaml"
     path.write_text(
-        f"album: A\nvoice: {voice}\nepisodes:\n"
+        "album: A\npace: 165\ncast:\n"
+        f"  narrator: {voice}\n  tradeoff: bf_emma\n  exercise: am_michael\n"
+        "episodes:\n"
         "  - number: 1\n    title: T\n    sources: [overview]\n"
         "    exercise: Open a session and look at what loaded.\n"
     )
@@ -377,7 +382,7 @@ def test_the_build_tells_each_episode_what_came_before(tmp_path, monkeypatch):
 
     def fake_script(ep, text, cache_dir, previous_title=None):
         seen[ep.number] = previous_title
-        return "Clean narration with nothing unspeakable in it."
+        return "NARRATOR: Clean narration.\n\nEXERCISE: Go do it."
 
     monkeypatch.setattr(build_module, "build_script", fake_script)
     curriculum = load_curriculum(Path("curriculum.yaml"))

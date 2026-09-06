@@ -59,7 +59,16 @@ belongs upstream — usually in the narration prompt.
 
 **The engine is swappable; the curriculum is the asset.** Text-to-speech sits
 behind one function for a reason. Voices and vendors will change. What is worth
-keeping is `curriculum.yaml`, the narration prompt, and the diagrams.
+keeping is `curriculum.yaml`, the narration prompt, and the diagrams. That
+promise was cashed once already: the engine moved from the macOS `say` command
+to Kokoro, and only `speak.py` changed.
+
+**A voice change means something.** Three voices, and each one carries the same
+meaning in every episode: the narrator explains, a second voice names the
+trade-off, and a third always closes on the exercise. Audio cannot show a
+heading, so a change of speaker is the only structural signal available -- which
+is exactly why it must never be spent on variety. A listener learns the exercise
+voice once and then recognises it for the rest of the course.
 
 ## Non-goals
 
@@ -81,6 +90,9 @@ Worth naming plainly, so the failure is recognizable early:
 - **The voice is unbearable.** Seven hours is a long time. The engine interface
   exists so this stays reversible, but re-synthesizing 43 episodes is expensive
   once they exist.
+- **The cast becomes noise.** Three voices only work while each one means one
+  thing. The moment a voice change is decoration, every change stops carrying
+  information and the whole device is worse than a single narrator.
 - **It gets built and never listened to.** The most likely failure of all, and
   the one no test catches.
 

@@ -12,7 +12,8 @@ from .feed import FeedError, build_feed
 from .fetch import fetch_doc
 from .manifest import Curriculum, Episode, ManifestError, load_curriculum
 from .script import build_script
-from .speak import SpeakError, available_voices, synthesize
+from .segments import parse_segments
+from .speak import NATURAL_WPM, SpeakError, synthesize_segments
 from .tag import tag_audio
 
 DIAGRAMS = Path("diagrams")
@@ -40,8 +41,10 @@ def _stamp(script: str, curriculum: Curriculum, episode: Episode) -> str:
     the diagram is embedded in it. Anything left out of this goes stale silently.
     """
     digest = hashlib.sha256()
+    cast = ",".join(f"{role}={voice}" for role, voice in sorted(curriculum.cast.items()))
     for field in (
-        script, curriculum.voice, curriculum.album, _diagram_fingerprint(episode)
+        script, cast, str(curriculum.pace), curriculum.album,
+        _diagram_fingerprint(episode),
     ):
         digest.update(field.encode())
         digest.update(b"\x00")
@@ -81,8 +84,11 @@ def _build_one(
     if audio_path.exists() and stamp_path.exists() and stamp_path.read_text() == stamp:
         return audio_path, True
 
-    audio = synthesize(
-        script, out_dir / "audio" / f"{episode.slug}.m4a", voice=curriculum.voice
+    audio = synthesize_segments(
+        parse_segments(script),
+        curriculum.cast,
+        curriculum.pace,
+        out_dir / "audio" / f"{episode.slug}.m4a",
     )
 
     artwork = None
@@ -269,16 +275,18 @@ def main(argv: list[str] | None = None) -> int:
 
     # Check the voice before spending anything. It is used at the last stage of
     # every episode, so without this one typo burns every model call in the run.
-    try:
-        if curriculum.voice not in available_voices():
-            print(
-                f"error: voice {curriculum.voice!r} is not installed. "
-                f"Run `say -v '?'` to see what is.",
-                file=sys.stderr,
-            )
-            return 1
-    except SpeakError as exc:
-        print(f"error: could not list voices: {exc}", file=sys.stderr)
+    unknown = {
+        role: voice
+        for role, voice in curriculum.cast.items()
+        if voice not in NATURAL_WPM
+    }
+    if unknown:
+        print(
+            "error: cast names voices the engine does not have: "
+            + ", ".join(f"{r}={v!r}" for r, v in sorted(unknown.items()))
+            + f". Known voices: {', '.join(sorted(NATURAL_WPM))}",
+            file=sys.stderr,
+        )
         return 1
 
     try:
