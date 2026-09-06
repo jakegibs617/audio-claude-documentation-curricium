@@ -391,3 +391,40 @@ def test_the_build_tells_each_episode_what_came_before(tmp_path, monkeypatch):
     assert seen[1] is None, "the first episode has no predecessor"
     assert seen[2] == curriculum.episode(1).title
     assert seen[3] == curriculum.episode(2).title
+
+
+def test_build_all_writes_an_audiobook(tmp_path, monkeypatch):
+    """The audiobook is how this actually reaches a phone, so it regenerates
+    with the build rather than being a thing you remember to run."""
+    import subprocess
+
+    import audiodocs.build as build_module
+
+    # Real AAC, so ffmpeg's concat and chapter maths are genuinely exercised.
+    def real_synthesize(segments, cast, pace, out_path):
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+             "-i", "anullsrc=r=44100:cl=mono", "-t", "1.0",
+             "-c:a", "aac", "-b:a", "32k", str(out_path)],
+            check=True, capture_output=True,
+        )
+        return out_path
+
+    _stub_pipeline(monkeypatch, build_module)
+    monkeypatch.setattr(build_module, "synthesize_segments", real_synthesize)
+
+    rc = build_module.main(
+        ["--curriculum", "curriculum.yaml", "--out", str(tmp_path),
+         "--episode", "1", "--episode", "2", "--base-url", "https://x.test/a/"]
+    )
+    assert rc == 0
+    book = tmp_path / "claude-code-narrated.m4b"
+    assert book.exists()
+
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_chapters", "-of", "csv", str(book)],
+        capture_output=True, text=True,
+    ).stdout
+    assert probe.count("chapter") == 2

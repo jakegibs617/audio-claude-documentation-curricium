@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .art import render_png
+from .book import BookError, build_audiobook
 from .feed import FeedError, build_feed
 from .fetch import fetch_doc
 from .manifest import Curriculum, Episode, ManifestError, load_curriculum
@@ -305,6 +306,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"feed: {feed}")
     except FeedError as exc:
         print(f"warning: feed not written: {exc}", file=sys.stderr)
+
+    # One chaptered file is how the course actually reaches a phone: it
+    # remembers a position across the whole thing, which 43 separate tracks
+    # cannot. Like the feed, it lists whatever exists and never masks a failure.
+    try:
+        art = sorted((args.out / "art").glob("*.png"))
+        book = build_audiobook(
+            curriculum,
+            args.out / "audio",
+            args.out / "claude-code-narrated.m4b",
+            cover=art[0] if art else None,
+        )
+        print(f"audiobook: {book}")
+    except BookError as exc:
+        print(f"warning: audiobook not written: {exc}", file=sys.stderr)
 
     return 0 if report.ok else 1
 
