@@ -57,7 +57,12 @@ def _default_runner(prompt: str, stdin: str) -> str:
         timeout=900,
     )
     if result.returncode != 0:
-        raise ScriptError(f"claude -p failed: {result.stderr.strip()}")
+        # Report both streams and the code. A usage-limit notice arrives on
+        # stdout, so reporting stderr alone yields an empty reason -- which is
+        # how one run produced 31 identical blank failures.
+        detail = (result.stderr.strip() or result.stdout.strip()
+                  or "no output on either stream")
+        raise ScriptError(f"claude -p failed (exit {result.returncode}): {detail[:300]}")
     return result.stdout.strip()
 
 

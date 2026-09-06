@@ -220,3 +220,24 @@ def test_the_sanitizer_checks_spoken_text_not_the_labels(tmp_path):
     with pytest.raises(ScriptError) as exc:
         build_script(ep, "OTHER SOURCES", tmp_path, runner=lambda p, s: bad)
     assert "--print" in str(exc.value)
+
+
+def test_a_failing_model_call_reports_something_actionable(monkeypatch, tmp_path):
+    """A run once failed 31 times with "claude -p failed:" and nothing after the
+    colon, because the reason was on stdout and only stderr was reported."""
+    import subprocess as sp
+
+    import audiodocs.script as script_mod
+
+    class Result:
+        returncode = 1
+        stdout = "Usage limit reached. Resets at 7am."
+        stderr = ""
+
+    monkeypatch.setattr(sp, "run", lambda *a, **k: Result())
+    with pytest.raises(ScriptError) as exc:
+        script_mod._default_runner("prompt", "stdin")
+
+    message = str(exc.value)
+    assert "Usage limit reached" in message
+    assert "exit 1" in message
