@@ -26,7 +26,7 @@ keyed by event name, each holding a matcher and a command" rather than showing J
 Name flags in words: "the print flag", "the resume flag".
 - Never write a table. Turn comparisons into sentences.
 - Never refer to anything "above", "below", or "shown" - the listener sees nothing.
-- Open with one sentence connecting to the previous episode's idea.
+- {continuity}
 - Explain the mental model and the trade-offs, not the syntax.
 - Close by stating the exercise as something to go and do.
 - Target between 1200 and 1800 words.
@@ -52,7 +52,28 @@ def _default_runner(prompt: str, stdin: str) -> str:
     return result.stdout.strip()
 
 
-def _cache_key(episode: Episode, sources_text: str) -> str:
+FIRST_EPISODE_OPENING = (
+    "This is the first episode, so open cold. Do not say \"last time\" or refer "
+    "to any previous episode -- there isn't one."
+)
+
+
+def _continuity(previous_title: str | None) -> str:
+    """What to say in the opening line.
+
+    Told to connect to the previous episode without being told which one it was,
+    the model invents a plausible-sounding one. Naming it is the whole fix.
+    """
+    if previous_title is None:
+        return FIRST_EPISODE_OPENING
+    return (
+        f"Open with one sentence connecting back to the previous episode, which "
+        f"was titled \"{previous_title}\". Refer to its actual subject; do not "
+        f"invent a different one."
+    )
+
+
+def _cache_key(episode: Episode, sources_text: str, previous_title: str | None) -> str:
     digest = hashlib.sha256()
     # Hash the prompt itself, not a hand-maintained version string: editing the
     # prompt is the documented fix for bad narration and must actually rebuild.
@@ -65,6 +86,7 @@ def _cache_key(episode: Episode, sources_text: str) -> str:
         sanitize_fingerprint(),
         episode.title,
         episode.exercise,
+        previous_title or "",
         sources_text,
     ):
         digest.update(field.encode())
@@ -97,11 +119,16 @@ def _reject_unspeakable(script: str, episode: Episode, cache_dir: Path) -> None:
 
 
 def build_script(
-    episode: Episode, sources_text: str, cache_dir: Path, runner=None
+    episode: Episode,
+    sources_text: str,
+    cache_dir: Path,
+    runner=None,
+    previous_title: str | None = None,
 ) -> str:
     """Return narration for `episode`, calling the model only on a cache miss."""
     cache_dir = Path(cache_dir)
-    cached = cache_dir / f"{episode.slug}-{_cache_key(episode, sources_text)}.txt"
+    key = _cache_key(episode, sources_text, previous_title)
+    cached = cache_dir / f"{episode.slug}-{key}.txt"
 
     if cached.exists():
         # Re-check on the cache-hit path too. The sanitizer will get stricter;
@@ -110,7 +137,11 @@ def build_script(
         _reject_unspeakable(script, episode, cache_dir)
         return script
 
-    prompt = NARRATION_PROMPT.format(title=episode.title, exercise=episode.exercise)
+    prompt = NARRATION_PROMPT.format(
+        title=episode.title,
+        exercise=episode.exercise,
+        continuity=_continuity(previous_title),
+    )
     script = (runner or _default_runner)(prompt, sources_text)
 
     if not script.strip():

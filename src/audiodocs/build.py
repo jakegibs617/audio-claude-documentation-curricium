@@ -64,7 +64,16 @@ def _build_one(
     sources_text = "\n\n---\n\n".join(
         fetch_doc(slug, cache / "docs") for slug in episode.sources
     )
-    script = build_script(episode, sources_text, cache / "scripts")
+    # The curriculum is a sequence, so the narration must know where it sits in
+    # it. Without the previous episode's title the model invents one.
+    previous = None
+    ordered = sorted(curriculum.episodes, key=lambda e: e.number)
+    for earlier, later in zip(ordered, ordered[1:]):
+        if later.number == episode.number:
+            previous = earlier.title
+    script = build_script(
+        episode, sources_text, cache / "scripts", previous_title=previous
+    )
 
     audio_path = out_dir / "audio" / f"{episode.slug}.m4a"
     stamp_path = _stamp_path(episode, out_dir)

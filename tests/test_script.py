@@ -70,7 +70,7 @@ def test_cached_script_is_still_sanitized(tmp_path):
     ep = Episode(number=3, title="The Context Window", sources=["x"], exercise="do it")
     cache = tmp_path / "scripts"
     cache.mkdir()
-    key = build_script.__globals__["_cache_key"](ep, "SOURCES")
+    key = build_script.__globals__["_cache_key"](ep, "SOURCES", None)
     (cache / f"{ep.slug}-{key}.txt").write_text("Use the `--print` flag.")
 
     def never(prompt, stdin):
@@ -139,3 +139,43 @@ def test_tightening_the_sanitizer_invalidates_cached_scripts(tmp_path, monkeypat
     build_script(ep, "SOURCES", tmp_path, runner=runner)
 
     assert len(calls) == 2, "sanitizer changed but the old cache key still matched"
+
+
+def test_the_prompt_names_the_actual_previous_episode(tmp_path):
+    """Told to connect to the previous episode but not which one it was, the
+    model invents a plausible one. Across 43 episodes that is a course that
+    continually misremembers itself."""
+    ep = Episode(number=4, title="Prompt caching", sources=["x"], exercise="do it")
+    seen = []
+
+    build_script(
+        ep, "SOURCES", tmp_path,
+        runner=lambda p, s: seen.append(p) or "Clean narration, nothing unspeakable.",
+        previous_title="The context window",
+    )
+    assert "The context window" in seen[0]
+
+
+def test_the_first_episode_is_told_to_open_cold(tmp_path):
+    """Episode 1 has no previous episode, and saying "last time" in the opening
+    line of the first episode is the worst possible first impression."""
+    ep = Episode(number=1, title="What it is called", sources=["x"], exercise="do it")
+    seen = []
+
+    build_script(
+        ep, "SOURCES", tmp_path,
+        runner=lambda p, s: seen.append(p) or "Clean narration, nothing unspeakable.",
+        previous_title=None,
+    )
+    assert "first episode" in seen[0].lower()
+
+
+def test_the_previous_episode_is_part_of_the_cache_key(tmp_path):
+    """Reordering the curriculum changes every opening line."""
+    ep = Episode(number=4, title="Prompt caching", sources=["x"], exercise="do it")
+    calls = []
+    runner = lambda p, s: calls.append(p) or "Clean narration, nothing unspeakable."
+
+    build_script(ep, "SOURCES", tmp_path, runner=runner, previous_title="A")
+    build_script(ep, "SOURCES", tmp_path, runner=runner, previous_title="B")
+    assert len(calls) == 2

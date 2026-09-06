@@ -11,7 +11,7 @@ def _stub_pipeline(monkeypatch, build_module, fail_titles=None):
     """
     fail_titles = fail_titles or set()
 
-    def fake_build_script(ep, text, cache_dir):
+    def fake_build_script(ep, text, cache_dir, previous_title=None):
         if ep.title in fail_titles:
             raise RuntimeError(f"synthetic failure for {ep.title}")
         return f"Narration text, long enough, with no code or urls in it. {ep.exercise}"
@@ -55,7 +55,7 @@ def test_builds_an_episode_from_cached_inputs(tmp_path, monkeypatch):
     monkeypatch.setattr(build_module, "fetch_doc",
                         lambda slug, cache_dir: f"# {slug}\n\nBody.")
     monkeypatch.setattr(build_module, "build_script",
-                        lambda ep, text, cache_dir: narration)
+                        lambda ep, text, cache_dir, previous_title=None: narration)
 
     curriculum = load_curriculum(Path("curriculum.yaml"))
     episode = curriculum.episode(3)
@@ -279,7 +279,9 @@ def test_a_bad_voice_fails_before_any_model_call(tmp_path, monkeypatch):
     calls = []
     real = build_module.build_script
     monkeypatch.setattr(
-        build_module, "build_script", lambda *a: calls.append(1) or real(*a)
+        build_module,
+        "build_script",
+        lambda *a, **k: calls.append(1) or real(*a, **k),
     )
 
     rc = build_module.main(
@@ -363,3 +365,24 @@ def test_unknown_episode_number_is_an_error_not_a_traceback(tmp_path, monkeypatc
         ["--curriculum", "curriculum.yaml", "--out", str(tmp_path), "--episode", "99"]
     )
     assert rc == 1
+
+
+def test_the_build_tells_each_episode_what_came_before(tmp_path, monkeypatch):
+    """Continuity is a property of the curriculum's order, so the build is the
+    only place that knows it."""
+    import audiodocs.build as build_module
+
+    _stub_pipeline(monkeypatch, build_module)
+    seen = {}
+
+    def fake_script(ep, text, cache_dir, previous_title=None):
+        seen[ep.number] = previous_title
+        return "Clean narration with nothing unspeakable in it."
+
+    monkeypatch.setattr(build_module, "build_script", fake_script)
+    curriculum = load_curriculum(Path("curriculum.yaml"))
+    build_module.build_all(curriculum, tmp_path, only=[1, 2, 3])
+
+    assert seen[1] is None, "the first episode has no predecessor"
+    assert seen[2] == curriculum.episode(1).title
+    assert seen[3] == curriculum.episode(2).title
