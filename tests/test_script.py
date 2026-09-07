@@ -1,0 +1,243 @@
+import pytest
+from audiodocs.manifest import Episode
+from audiodocs.script import build_script, ScriptError, NARRATION_PROMPT
+
+EPISODE = Episode(
+    number=3,
+    title="The context window",
+    sources=["context-window"],
+    exercise="Run /context and read the breakdown.",
+    diagram="ep03-context-window",
+)
+
+GOOD = (
+    "NARRATOR: The context window is not a filing cabinet, it is a desk. "
+    "Everything Claude can see sits there at once. When it fills, older turns "
+    "get summarized.\n\n"
+    "EXERCISE: Run the context command and read the breakdown out loud."
+)
+
+
+def test_returns_model_output(tmp_path):
+    script = build_script(EPISODE, "# Context window\n\nBody.", tmp_path,
+                          runner=lambda prompt, stdin: GOOD)
+    assert script == GOOD
+
+
+def test_prompt_includes_title_and_exercise(tmp_path):
+    seen = {}
+
+    def runner(prompt, stdin):
+        seen["prompt"] = prompt
+        seen["stdin"] = stdin
+        return GOOD
+
+    build_script(EPISODE, "SOURCE BODY", tmp_path, runner=runner)
+    assert "The context window" in seen["prompt"]
+    assert "Run /context and read the breakdown." in seen["prompt"]
+    assert seen["stdin"] == "SOURCE BODY"
+
+
+def test_rejects_unspeakable_output(tmp_path):
+    bad = GOOD + "\n\n```bash\nclaude resume\n```"
+    with pytest.raises(ScriptError, match="code fence"):
+        build_script(EPISODE, "body", tmp_path, runner=lambda p, s: bad)
+
+
+def test_rejects_empty_output(tmp_path):
+    with pytest.raises(ScriptError, match="returned nothing"):
+        build_script(EPISODE, "body", tmp_path, runner=lambda p, s: "   ")
+
+
+def test_caches_result(tmp_path):
+    calls = []
+    build_script(EPISODE, "body", tmp_path,
+                 runner=lambda p, s: (calls.append(1), GOOD)[1])
+    build_script(EPISODE, "body", tmp_path,
+                 runner=lambda p, s: (calls.append(1), GOOD)[1])
+    assert len(calls) == 1
+
+
+def test_changed_source_invalidates_cache(tmp_path):
+    calls = []
+    build_script(EPISODE, "body one", tmp_path,
+                 runner=lambda p, s: (calls.append(1), GOOD)[1])
+    build_script(EPISODE, "body two", tmp_path,
+                 runner=lambda p, s: (calls.append(1), GOOD)[1])
+    assert len(calls) == 2
+
+
+def test_cached_script_is_still_sanitized(tmp_path):
+    """A script cached before the sanitizer tightened must not stay exempt."""
+    ep = Episode(number=3, title="The Context Window", sources=["x"], exercise="do it")
+    cache = tmp_path / "scripts"
+    cache.mkdir()
+    key = build_script.__globals__["_cache_key"](ep, "SOURCES", None)
+    (cache / f"{ep.slug}-{key}.txt").write_text(
+        "NARRATOR: Use the `--print` flag.\n\nEXERCISE: Go and try it."
+    )
+
+    def never(prompt, stdin):
+        raise AssertionError("model must not be called on a cache hit")
+
+    with pytest.raises(ScriptError) as exc:
+        build_script(ep, "SOURCES", cache, runner=never)
+    assert "--print" in str(exc.value)
+
+
+def test_editing_the_prompt_invalidates_the_cache(tmp_path):
+    """INTENT.md: the fix is always the prompt. A prompt edit must actually rebuild."""
+    import audiodocs.script as script_mod
+
+    ep = Episode(number=3, title="The Context Window", sources=["x"], exercise="do it")
+    calls = []
+
+    def runner(prompt, stdin):
+        calls.append(prompt)
+        return "NARRATOR: Clean narration that says nothing unspeakable at all.\n\nEXERCISE: Go and try it."
+
+    original = script_mod.NARRATION_PROMPT
+    try:
+        build_script(ep, "SOURCES", tmp_path, runner=runner)
+        script_mod.NARRATION_PROMPT = original + "\nAlways mention the weather. {title}{exercise}"
+        build_script(ep, "SOURCES", tmp_path, runner=runner)
+    finally:
+        script_mod.NARRATION_PROMPT = original
+
+    assert len(calls) == 2, "prompt changed but the cache was reused"
+
+
+def test_rejected_script_is_kept_for_inspection(tmp_path):
+    """A rejection costs a model call; discarding the evidence costs another."""
+    ep = Episode(number=3, title="The Context Window", sources=["x"], exercise="do it")
+
+    with pytest.raises(ScriptError):
+        build_script(ep, "SOURCES", tmp_path, runner=lambda p, s: "NARRATOR: Use --print now.\n\nEXERCISE: Go do it.")
+
+    rejected = list(tmp_path.glob("*.rejected.txt"))
+    assert rejected, "rejected script was discarded"
+    assert "--print" in rejected[0].read_text()
+
+
+def test_tightening_the_sanitizer_invalidates_cached_scripts(tmp_path, monkeypatch):
+    """A cache key that ignores the rules wedges an episode permanently.
+
+    Tighten the sanitizer and an old cached script stays key-valid but
+    content-rejected: every rebuild raises, the model is never re-called, and
+    the error names the rejected copy rather than the cache file to delete.
+    """
+    import audiodocs.sanitize as sanitize_mod
+    import audiodocs.script as script_mod
+
+    ep = Episode(number=3, title="The Context Window", sources=["x"], exercise="do it")
+    calls = []
+
+    def runner(prompt, stdin):
+        calls.append(prompt)
+        return "NARRATOR: Clean narration that says nothing unspeakable at all.\n\nEXERCISE: Go and try it."
+
+    build_script(ep, "SOURCES", tmp_path, runner=runner)
+    assert len(calls) == 1
+
+    monkeypatch.setattr(sanitize_mod, "RULES_FINGERPRINT", "a-stricter-sanitizer")
+    build_script(ep, "SOURCES", tmp_path, runner=runner)
+
+    assert len(calls) == 2, "sanitizer changed but the old cache key still matched"
+
+
+def test_the_prompt_names_the_actual_previous_episode(tmp_path):
+    """Told to connect to the previous episode but not which one it was, the
+    model invents a plausible one. Across 43 episodes that is a course that
+    continually misremembers itself."""
+    ep = Episode(number=4, title="Prompt caching", sources=["x"], exercise="do it")
+    seen = []
+
+    build_script(
+        ep, "SOURCES", tmp_path,
+        runner=lambda p, s: seen.append(p) or "NARRATOR: Clean narration that says nothing unspeakable at all.\n\nEXERCISE: Go and try it.",
+        previous_title="The context window",
+    )
+    assert "The context window" in seen[0]
+
+
+def test_the_first_episode_is_told_to_open_cold(tmp_path):
+    """Episode 1 has no previous episode, and saying "last time" in the opening
+    line of the first episode is the worst possible first impression."""
+    ep = Episode(number=1, title="What it is called", sources=["x"], exercise="do it")
+    seen = []
+
+    build_script(
+        ep, "SOURCES", tmp_path,
+        runner=lambda p, s: seen.append(p) or "NARRATOR: Clean narration that says nothing unspeakable at all.\n\nEXERCISE: Go and try it.",
+        previous_title=None,
+    )
+    assert "first episode" in seen[0].lower()
+
+
+def test_the_previous_episode_is_part_of_the_cache_key(tmp_path):
+    """Reordering the curriculum changes every opening line."""
+    ep = Episode(number=4, title="Prompt caching", sources=["x"], exercise="do it")
+    calls = []
+    runner = lambda p, s: calls.append(p) or "NARRATOR: Clean narration that says nothing unspeakable at all.\n\nEXERCISE: Go and try it."
+
+    build_script(ep, "SOURCES", tmp_path, runner=runner, previous_title="A")
+    build_script(ep, "SOURCES", tmp_path, runner=runner, previous_title="B")
+    assert len(calls) == 2
+
+
+LABELLED = (
+    "NARRATOR: Last time we covered skills, and today we take on hooks.\n\n"
+    "TRADEOFF: What a hook costs you is selectivity.\n\n"
+    "EXERCISE: Add a hook that logs every Bash command.\n"
+)
+
+
+def test_the_prompt_asks_for_role_labels(tmp_path):
+    ep = Episode(number=8, title="Hooks", sources=["x"], exercise="do it")
+    seen = []
+    build_script(ep, "SOURCES", tmp_path,
+                 runner=lambda p, s: seen.append(p) or LABELLED)
+    assert "NARRATOR:" in seen[0] and "EXERCISE:" in seen[0]
+
+
+def test_an_unlabelled_script_is_rejected(tmp_path):
+    """Loud failure. Without labels there is nothing to cast, and one giant
+    unattributed block would be spoken entirely by the narrator by accident."""
+    ep = Episode(number=8, title="Hooks", sources=["x"], exercise="do it")
+    with pytest.raises(ScriptError) as exc:
+        build_script(ep, "SOURCES", tmp_path,
+                     runner=lambda p, s: "Just prose, no roles at all here.")
+    assert "label" in str(exc.value).lower() or "role" in str(exc.value).lower()
+
+
+def test_the_sanitizer_checks_spoken_text_not_the_labels(tmp_path):
+    """The labels are stage directions and are never spoken, so they are not the
+    sanitizer's business -- but everything else still is."""
+    ep = Episode(number=8, title="Hooks", sources=["x"], exercise="do it")
+    build_script(ep, "SOURCES", tmp_path, runner=lambda p, s: LABELLED)
+
+    bad = LABELLED.replace("selectivity.", "selectivity. Pass the --print flag.")
+    with pytest.raises(ScriptError) as exc:
+        build_script(ep, "OTHER SOURCES", tmp_path, runner=lambda p, s: bad)
+    assert "--print" in str(exc.value)
+
+
+def test_a_failing_model_call_reports_something_actionable(monkeypatch, tmp_path):
+    """A run once failed 31 times with "claude -p failed:" and nothing after the
+    colon, because the reason was on stdout and only stderr was reported."""
+    import subprocess as sp
+
+    import audiodocs.script as script_mod
+
+    class Result:
+        returncode = 1
+        stdout = "Usage limit reached. Resets at 7am."
+        stderr = ""
+
+    monkeypatch.setattr(sp, "run", lambda *a, **k: Result())
+    with pytest.raises(ScriptError) as exc:
+        script_mod._default_runner("prompt", "stdin")
+
+    message = str(exc.value)
+    assert "Usage limit reached" in message
+    assert "exit 1" in message

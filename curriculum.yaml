@@ -1,0 +1,180 @@
+album: Claude Code, Narrated
+pace: 165
+cast:
+  narrator: af_heart
+  tradeoff: bf_emma
+  exercise: am_michael
+episodes:
+  - number: 1
+    title: What all of this is called
+    sources: [glossary, features-overview]
+    exercise: Run /status in a session and try to define every field it shows from memory before checking the glossary; count how many you got wrong.
+  - number: 2
+    title: How Claude Code actually works
+    sources: [how-claude-code-works]
+    exercise: Run claude with no arguments and watch what loads before your first prompt.
+  - number: 3
+    title: The context window
+    sources: [context-window]
+    exercise: Run /context in a session that has been going a while, and read the breakdown out loud.
+    diagram: ep03-context-window
+  - number: 4
+    title: Prompt caching
+    sources: [prompt-caching]
+    exercise: Run /cost after a long session and find what the cache saved you.
+  - number: 5
+    title: Inside the .claude directory
+    sources: [claude-directory]
+    exercise: List your home claude directory recursively and name the purpose of every top-level entry.
+  - number: 6
+    title: Your first real task
+    sources: [quickstart]
+    exercise: Start a fresh session in a real repo and have Claude fix one actual small bug end to end without you touching a file yourself.
+  - number: 7
+    title: How Claude remembers your project
+    sources: [memory]
+    exercise: Add one line to your project's CLAUDE.md for a convention you always repeat yourself, then start a new session and confirm Claude follows it unprompted.
+  - number: 8
+    title: Sessions, resuming, and checkpoints
+    sources: [sessions, checkpointing]
+    exercise: Make an edit, run /rewind, restore to before the edit, and confirm the file on disk actually reverted.
+  - number: 9
+    title: Common workflows
+    sources: [common-workflows]
+    exercise: Pick one workflow from the common-workflows page you have never tried and run it once, start to finish, on your own project.
+  - number: 10
+    title: Best practices and the prompt library
+    sources: [best-practices, prompt-library]
+    exercise: Copy one prompt verbatim from the prompt library into a session on your own codebase and compare the result to how you would normally have phrased the ask.
+  - number: 11
+    title: Settings and precedence
+    sources: [settings, settings-reference, settings-example]
+    exercise: Set the same key to two different values in your user settings.json and your project .claude/settings.json, start a session, and check which value actually took effect.
+  - number: 12
+    title: Permissions
+    sources: [permissions, permission-modes]
+    exercise: Set one tool to "ask" in your permissions config, trigger it in a session and watch the prompt, then switch to plan mode and watch the same action get blocked instead.
+  - number: 13
+    title: Sandboxing
+    sources: [sandboxing, sandbox-environments]
+    exercise: Start a sandboxed session and ask Claude to write a file outside the project directory; observe the denial.
+  - number: 14
+    title: Models, fast mode, and the advisor
+    sources: [model-config, fast-mode, advisor]
+    exercise: Ask the same question in fast mode and again in normal mode, timing each with a stopwatch. You are measuring latency, not answer quality, which varies run to run.
+  - number: 15
+    title: The CLI surface
+    sources: [cli-reference, commands, interactive-mode, env-vars, tools-reference]
+    exercise: Ask claude a one-line question in headless print mode that you would normally ask interactively, and compare the output to what an interactive session gives you.
+  - number: 16
+    title: Skills
+    sources: [skills]
+    exercise: Write a two-line skill for a task you repeat often, drop it in .claude/skills, and trigger it by name in a session.
+  - number: 17
+    title: Hooks — the guide
+    sources: [hooks-guide]
+    exercise: Add a PreToolUse hook that prints a message before every Bash call, run a session, and watch it fire.
+  - number: 18
+    title: Hooks — the reference
+    sources: [hooks]
+    exercise: Look up the exact JSON shape for a PostToolUse hook, add a matcher that only fires on Edit, and confirm it stays silent on a Bash call.
+  - number: 19
+    title: MCP
+    sources: [mcp-quickstart, mcp]
+    exercise: Add one real MCP server with claude mcp add, then call one of its tools from a session.
+  - number: 20
+    title: Plugins
+    sources: [plugins, plugins-reference]
+    exercise: Install one plugin and confirm its command or skill actually shows up in a fresh session.
+  - number: 21
+    title: Distribution and output styles
+    sources: [discover-plugins, plugin-marketplaces, output-styles]
+    exercise: Switch your output style to something terser with /output-style, ask the same question again, and compare the verbosity of the two answers.
+  - number: 22
+    title: Running agents in parallel
+    sources: [agents]
+    exercise: Start two sessions on two different tasks in the same project, let both edit files, then run git status and work out which change came from which session.
+  - number: 23
+    title: Custom subagents
+    sources: [sub-agents]
+    exercise: Define one subagent scoped to a narrow, read-only tool set, invoke it from your main session, and watch it finish work without ever touching a file.
+  - number: 24
+    title: Agent teams and cross-session messaging
+    sources: [agent-teams, cross-session-messaging]
+    exercise: Send a message from one running session to another with cross-session messaging and confirm it arrives.
+  - number: 25
+    title: Dynamic workflows
+    sources: [workflows]
+    exercise: Author a two-step workflow where the first step's output feeds the second step, and run it end to end.
+  - number: 26
+    title: Agent view and worktrees
+    sources: [agent-view, worktrees]
+    exercise: Open Agent View while a session runs, then start a second task in a worktree and run git worktree list from both. Note that they share one object store, so a commit in either is visible to the other immediately.
+  - number: 27
+    title: Headless mode
+    sources: [headless]
+    exercise: Ask claude one real question about your repo in headless print mode from a shell script, and capture the output into a variable.
+  - number: 28
+    title: Schedules and routines
+    sources: [scheduled-tasks, routines]
+    exercise: Create one scheduled routine and confirm it shows up when you list your routines.
+  - number: 29
+    title: Keeping Claude on a goal
+    sources: [goal]
+    exercise: Set an explicit goal for a multi-step task, then run the context command ten turns later and find whether the goal is still loaded or has been compacted away.
+  - number: 30
+    title: Channels and deep links
+    sources: [channels, channels-reference, deep-links]
+    exercise: Generate a deep link to your current session and open it from a second tab or device.
+  - number: 31
+    title: CI, code review, and security
+    sources: [github-actions, code-review, security-guidance, claude-security, ultrareview]
+    exercise: Run a security review on your current branch's diff and read the first finding it surfaces.
+  - number: 32
+    title: The surface map
+    sources: [platforms]
+    exercise: List every surface on the platforms page you have not tried yet, and open one of them for the first time.
+  - number: 33
+    title: Remote control and mobile
+    sources: [remote-control, mobile]
+    exercise: Start a session on your desktop, then check its status or steer it from your phone.
+  - number: 34
+    title: Chrome and computer use
+    sources: [chrome, computer-use]
+    exercise: Ask Claude to open a real webpage in the browser and click one specific element, then confirm from the resulting page state that it worked.
+  - number: 35
+    title: Desktop, web, Slack, artifacts
+    sources: [desktop, desktop-quickstart, web-quickstart, claude-code-on-the-web, slack, claude-tag, artifacts]
+    exercise: Publish one small Artifact from a session and open the resulting link in a browser.
+  - number: 36
+    title: SDK overview and quickstart
+    sources: [agent-sdk/overview, agent-sdk/quickstart]
+    exercise: Follow the SDK quickstart to write and run a five-line custom agent script against one real prompt.
+  - number: 37
+    title: How the agent loop works
+    sources: [agent-sdk/agent-loop]
+    exercise: Add a print statement inside your quickstart script's message loop and watch one full turn of tool call, tool result, and response go by.
+  - number: 38
+    title: Sessions and persistence
+    sources: [agent-sdk/sessions, agent-sdk/session-storage]
+    exercise: Save an SDK session, kill the process, then resume it from disk and confirm the prior context is still there.
+  - number: 39
+    title: Streaming and structured output
+    sources: [agent-sdk/streaming-vs-single-mode, agent-sdk/streaming-output, agent-sdk/user-input, agent-sdk/structured-outputs]
+    exercise: Switch your quickstart script from single-mode to streaming and watch tokens arrive incrementally instead of all at once.
+  - number: 40
+    title: Custom tools and tool search
+    sources: [agent-sdk/custom-tools, agent-sdk/tool-search, agent-sdk/mcp]
+    exercise: Define one custom tool function in the SDK, call it from a live prompt, and confirm the result comes back through your own handler.
+  - number: 41
+    title: Subagents, skills, and plugins in the SDK
+    sources: [agent-sdk/subagents, agent-sdk/skills, agent-sdk/plugins, agent-sdk/modifying-system-prompts]
+    exercise: Register a subagent in your SDK script and confirm the main loop delegates one task to it instead of handling it directly.
+  - number: 42
+    title: Permissions, hooks, and checkpointing
+    sources: [agent-sdk/permissions, agent-sdk/hooks, agent-sdk/file-checkpointing]
+    exercise: Add a permission callback to your SDK script that denies one specific tool call, trigger it, and confirm the denial actually blocks the action.
+  - number: 43
+    title: Cost, observability, and deployment
+    sources: [agent-sdk/cost-tracking, agent-sdk/observability, agent-sdk/todo-tracking, agent-sdk/hosting, agent-sdk/secure-deployment]
+    exercise: Read the cost and usage totals your SDK script reports after one real run and note the dollar figure.
